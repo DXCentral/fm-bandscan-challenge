@@ -55,6 +55,7 @@ def get_logged_stations_set():
         sheet = get_gsheet()
         vals = sheet.get_all_values()
         if len(vals) < 2: return set()
+        # Create a set of "Callsign-Frequency" strings for quick lookup
         return set(str(row[5]).strip() + "-" + str(row[4]).strip() for row in vals[1:])
     except: return set()
 
@@ -77,14 +78,14 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return round(2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a)), 1)
 
 def get_gsheet():
-    scope = ["https://www.googleapis.com/auth/sheets"]
+    scope = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v43")
+        geolocator = Nominatim(user_agent="dx_central_logger_v44")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -109,7 +110,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v43")
+            geolocator = Nominatim(user_agent="dx_central_logger_v44")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -165,19 +166,14 @@ with st.sidebar:
 
     st.divider()
     with st.expander("📄 Privacy & Data Info"):
-        st.caption("""
-        **Profile Data:** Clicking 'Remember Me' saves your name and location locally. 
-        **Logs:** Submitted logs are recorded publicly in the DX Central database.
-        """)
+        st.caption("Profile data is stored locally. Logs are public.")
     if st.button("🔄 Clear Data Cache"):
         st.cache_data.clear()
         st.rerun()
 
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
-# UPDATED CREDITS STATEMENT
 st.caption("Station list and data is sourced from the Worldwide TV-FM DX Association Station Database at [db.wtfda.org](https://db.wtfda.org/)")
-
 if 'filter_key' not in st.session_state: st.session_state.filter_key = 0
 def reset_all(): st.session_state.filter_key += 1
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
@@ -193,8 +189,11 @@ st.button("Clear All Filters", on_click=reset_all)
 
 # --- 6. FILTER LOGIC & TABLE ---
 view_df = df_stations.copy()
+
+# RESTORED: This section cross-references the current list with your Google Sheet logs
 view_df['Dist'] = view_df.apply(lambda r: calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, dms_to_dd(r.get('Lat-N')), -dms_to_dd(r.get('Long-W')) if dms_to_dd(r.get('Long-W')) else None), axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
+
 if f_freq: view_df = view_df[view_df['Frequency'] == f_freq]
 if f_call: view_df = view_df[view_df['Station Callsign'].str.contains(f_call, na=False)]
 if f_city: view_df = view_df[view_df['City'].str.contains(f_city, case=False, na=False)]
@@ -203,6 +202,8 @@ if f_country: view_df = view_df[view_df['Country'] == f_country]
 if f_slogan: view_df = view_df[view_df['Slogan'].str.contains(f_slogan, case=False, na=False)]
 if f_status == "Logged Only": view_df = view_df[view_df['Already Logged'] == True]
 elif f_status == "Not Logged Only": view_df = view_df[view_df['Already Logged'] == False]
+
+# RESTORED: Re-applying the green dot emoji for logged stations
 view_df['Display Callsign'] = view_df.apply(lambda r: f"🟢 {r['Station Callsign']}" if r['Already Logged'] else r['Station Callsign'], axis=1)
 
 col_stats, col_export = st.columns([3, 1])
