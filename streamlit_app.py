@@ -17,6 +17,14 @@ CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 @st.cache_data
 def load_stations():
     df = pd.read_csv(STATION_DATA, dtype=str)
+    
+    # --- NEW: ERP POWER LOGIC ---
+    # Column J = ERP-H, Column K = ERP-V
+    df['ERP-H'] = pd.to_numeric(df['ERP-H'], errors='coerce').fillna(0)
+    df['ERP-V'] = pd.to_numeric(df['ERP-V'], errors='coerce').fillna(0)
+    # Take the max of H or V to show the station's peak power
+    df['Power (kW)'] = df[['ERP-H', 'ERP-V']].max(axis=1) / 1000
+    
     def scrub_pi(val):
         if pd.isna(val) or val == 'nan' or val == '': return ""
         try:
@@ -24,6 +32,7 @@ def load_stations():
             if float_val > 65535: return "" 
             return '{:.0f}'.format(float_val)
         except: return str(val).strip()
+        
     df['PI Code'] = df['PI Code'].apply(scrub_pi)
     df['Frequency'] = pd.to_numeric(df['Frequency'], errors='coerce')
     df['Station Callsign'] = df['Callsign'].str.replace(r'-FM$', '', regex=True)
@@ -72,7 +81,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_final_v30")
+        geolocator = Nominatim(user_agent="dx_central_logger_v33")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -97,12 +106,12 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_final_v30")
+            geolocator = Nominatim(user_agent="dx_central_logger_v33")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
                 st.session_state["home_lon_val"] = float(loc.longitude)
-                reverse_geocode(loc.latitude, loc.longitude)
+                update_profile_from_coords() # Manual lookup trigger
         except: pass
 
 # --- 3. UI SETUP ---
@@ -152,15 +161,27 @@ with st.sidebar:
 
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
+# --- NEW: CREDITS LINK ---
+st.caption("Station data is sourced from the Worldwide TV-FM DX Association (WTFDA) Database at [db.wtfda.org](https://db.wtfda.org/)")
+
 if 'filter_key' not in st.session_state: st.session_state.filter_key = 0
 def reset_all(): st.session_state.filter_key += 1
 
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+# Get country selection first for cascading filter
+f_country = c5.selectbox("Country", sorted(df_stations['Country'].unique().tolist()), index=None, key=f"f5_{st.session_state.filter_key}")
+
+# --- NEW: CASCADING STATE FILTER ---
+if f_country:
+    state_list = sorted(df_stations[df_stations['Country'] == f_country]['State/Province'].unique().tolist())
+else:
+    state_list = sorted(df_stations['State/Province'].unique().tolist())
+
+f_sp = c4.selectbox("State/Prov", state_list, index=None, key=f"f4_{st.session_state.filter_key}")
+
 f_freq = c1.selectbox("Frequency", sorted(df_stations['Frequency'].unique()), index=None, key=f"f1_{st.session_state.filter_key}")
 f_call = c2.text_input("Callsign", key=f"f2_{st.session_state.filter_key}").upper()
 f_city = c3.text_input("City", key=f"f3_{st.session_state.filter_key}")
-f_sp = c4.selectbox("State/Prov", sorted(df_stations['State/Province'].unique().tolist()), index=None, key=f"f4_{st.session_state.filter_key}")
-f_country = c5.selectbox("Country", sorted(df_stations['Country'].unique().tolist()), index=None, key=f"f5_{st.session_state.filter_key}")
 f_slogan = c6.text_input("Slogan", key=f"f6_{st.session_state.filter_key}")
 f_status = c7.selectbox("Status", ["All", "Logged Only", "Not Logged Only"], index=0, key=f"f7_{st.session_state.filter_key}")
 
@@ -171,6 +192,7 @@ view_df = df_stations.copy()
 def safe_dist(r):
     lat_d, lon_d = dms_to_dd(r['Lat-N']), dms_to_dd(r['Long-W'])
     return calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, lat_d, -lon_d) if lat_d else 0
+
 view_df['Dist'] = view_df.apply(safe_dist, axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
 
@@ -187,15 +209,18 @@ view_df['Display Callsign'] = view_df.apply(lambda r: f"🟢 {r['Station Callsig
 
 col_stats, col_export = st.columns([3, 1])
 col_stats.write(f"Showing {len(view_df)} stations:")
-export_df = view_df.drop(columns=['Display Callsign', 'Already Logged']).copy()
-csv_data = export_df.to_csv(index=False).encode('utf-8')
-col_export.download_button(label="📥 Export List to CSV", data=csv_data, file_name=f"Bandscan_{datetime.datetime.now().strftime('%Y%m%d')}.csv", mime='text/csv', use_container_width=True)
+
+if f_status == "Logged Only":
+    export_df = view_df.drop(columns=['Display Callsign', 'Already Logged']).copy()
+    csv_data = export_df.to_csv(index=False).encode('utf-8')
+    col_export.download_button(label="📥 Export My Logged List", data=csv_data, file_name=f"MyLogs_{datetime.datetime.now().strftime('%Y%m%d')}.csv", mime='text/csv', use_container_width=True)
+else:
+    col_export.info("Filter to 'Logged Only' to export.")
 
 view_df.insert(0, 'Select', False)
-
-# --- THE CENTERED TABLE ---
 st.data_editor(
-    view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist']],
+    # ADDED 'Power (kW)' to the columns shown
+    view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']],
     use_container_width=True, hide_index=True,
     column_config={
         "Select": st.column_config.CheckboxColumn("Log?"),
@@ -206,16 +231,16 @@ st.data_editor(
         "Country": st.column_config.TextColumn("Country", alignment="center"),
         "Slogan": st.column_config.TextColumn("Slogan", alignment="center"),
         "PI Code": st.column_config.TextColumn("PI Code", alignment="center"),
+        "Power (kW)": st.column_config.NumberColumn("Power (kW)", format="%.1f", alignment="center"),
         "Dist": st.column_config.NumberColumn("Dist (mi)", format="%.1f", alignment="center"),
     },
-    disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist'],
+    disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'],
     key=f"ed_{st.session_state.filter_key}"
 )
 
 # --- 7. LOGGING FORM ---
 st.divider()
 manual_mode = st.toggle("🛠️ Manual Entry Mode (For unlisted stations or open frequencies)")
-
 ed_state = st.session_state.get(f"ed_{st.session_state.filter_key}")
 selected_idx = next((idx for idx, chg in ed_state["edited_rows"].items() if chg.get("Select")), None) if ed_state and "edited_rows" in ed_state else None
 
@@ -250,7 +275,7 @@ if manual_mode or selected_idx is not None:
             cat_d = st.selectbox("Frequency Category", [""] + df_categories['Display'].tolist())
             final_cat, prop = cat_d.split(" - ")[0] if cat_d else "", st.selectbox("Propagation", ["Local", "Tropo", "Es", "Meteor Scatter"])
         with r4c3:
-            st.write("Cross-Posting:")
+            st.write("**Bonus Points:**")
             fml, wlo = st.checkbox("Logged on FMList?"), st.checkbox("Logged on WLogger?")
 
         if st.form_submit_button("Submit Log Entry"):
