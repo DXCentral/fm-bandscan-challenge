@@ -16,7 +16,7 @@ CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 
 @st.cache_data
 def load_stations():
-    df = pd.read_csv(STATION_DATA, dtype=str)
+    df = pd.csv_read(STATION_DATA, dtype=str)
     def scrub_pi(val):
         if pd.isna(val) or val == 'nan' or val == '': return ""
         try:
@@ -56,7 +56,9 @@ def dms_to_dd(dms_str):
     except: return None
 
 def calculate_distance(lat1, lon1, lat2, lon2):
-    if any(v is None or v == 0 for v in [lat1, lon1, lat2, lon2]): return 0
+    # Safety check for None or 0 values
+    if any(v is None for v in [lat1, lon1, lat2, lon2]): return 0
+    if lat1 == 0 and lon1 == 0: return 0
     R = 3958.8 
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
@@ -69,68 +71,88 @@ def get_gsheet():
     client = gspread.authorize(creds)
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
+def reverse_geocode(lat, lon):
+    """Updates sidebar text inputs based on coordinates"""
+    try:
+        geolocator = Nominatim(user_agent="dx_central_logger_v2")
+        location = geolocator.reverse(f"{lat}, {lon}", language='en')
+        if location:
+            address = location.raw.get('address', {})
+            # Update session state keys linked to text inputs
+            st.session_state.dx_city = address.get('city', address.get('town', address.get('village', '')))
+            st.session_state.dx_st = address.get('state', address.get('province', ''))
+            st.session_state.dx_ctry = address.get('country', 'USA')
+    except:
+        pass
+
 # --- 3. UI SETUP ---
 st.set_page_config(page_title="DX Central FM Logger", layout="wide")
 df_stations = load_stations()
 df_categories = load_categories()
 logged_stations = get_logged_stations_set()
 
-# --- 4. SIDEBAR WITH SMART LOCATION ---
+# --- 4. SIDEBAR WITH REVERSE GEOCODING ---
 with st.sidebar:
     st.header("📍 DXer Profile")
     js_code = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_code)
     
-    # Initialize session state for coordinates if not already there
-    if 'home_lat' not in st.session_state:
+    # Initialize session state for all profile fields
+    if 'dx_name' not in st.session_state:
         if isinstance(saved_data, dict):
+            st.session_state.dx_name = saved_data.get("name", "")
+            st.session_state.dx_city = saved_data.get("city", "")
+            st.session_state.dx_st = saved_data.get("st", "")
+            st.session_state.dx_ctry = saved_data.get("ctry", "USA")
             st.session_state.home_lat = float(saved_data.get("lat", 0.0))
             st.session_state.home_lon = float(saved_data.get("lon", 0.0))
         else:
+            st.session_state.dx_name = ""
+            st.session_state.dx_city = ""
+            st.session_state.dx_st = ""
+            st.session_state.dx_ctry = "USA"
             st.session_state.home_lat = 0.0
             st.session_state.home_lon = 0.0
 
-    s_name = saved_data.get("name", "") if isinstance(saved_data, dict) else ""
-    s_city = saved_data.get("city", "") if isinstance(saved_data, dict) else ""
-    s_st = saved_data.get("st", "") if isinstance(saved_data, dict) else ""
-    s_ctry = saved_data.get("ctry", "") if isinstance(saved_data, dict) else ""
-
-    dxer_name = st.text_input("Your Name", value=s_name)
+    dxer_name = st.text_input("Your Name", key="dx_name")
     col_c, col_s = st.columns([2, 1])
-    dxer_city = col_c.text_input("City", value=s_city)
-    dxer_st = col_s.text_input("ST/Prov", value=s_st)
-    dxer_ctry = st.text_input("Country", value=s_ctry)
+    dxer_city = col_c.text_input("City", key="dx_city")
+    dxer_st = col_s.text_input("ST/Prov", key="dx_st")
+    dxer_ctry = st.text_input("Country", key="dx_ctry")
 
     st.divider()
     st.subheader("🛰️ Set Location")
     loc_method = st.radio("Method", ["Grid Square", "City Search", "Manual Lat/Lon"], horizontal=True)
     
     if loc_method == "Grid Square":
-        grid = st.text_input("Enter Grid Square (e.g. EL40sa)", placeholder="XX##xx")
+        grid = st.text_input("Enter Grid Square (e.g. EM40xi)", placeholder="XX##xx")
         if grid:
             try:
                 lat, lon = mh.toLoc(grid)
                 st.session_state.home_lat, st.session_state.home_lon = lat, lon
+                reverse_geocode(lat, lon) # AUTO-POPULATE CITY/ST
                 st.success(f"Grid Set: {lat:.4f}, {lon:.4f}")
             except: st.error("Invalid Grid Square")
 
     elif loc_method == "City Search":
-        search_query = st.text_input("Enter City & Country", placeholder="e.g. Mandeville, LA")
+        search_query = st.text_input("Enter City & State/Country", placeholder="e.g. Mandeville, LA")
         if st.button("Lookup Location"):
-            geolocator = Nominatim(user_agent="dx_central_logger")
+            geolocator = Nominatim(user_agent="dx_central_logger_v2")
             location = geolocator.geocode(search_query)
             if location:
                 st.session_state.home_lat, st.session_state.home_lon = location.latitude, location.longitude
+                reverse_geocode(location.latitude, location.longitude) # AUTO-POPULATE CITY/ST
                 st.success(f"Found: {location.latitude:.4f}, {location.longitude:.4f}")
-            else: st.error("City not found. Try adding a country.")
+            else: st.error("Location not found.")
 
-    # Manual inputs (always visible/editable but updated by search)
+    # Always show/allow manual override
     st.session_state.home_lat = st.number_input("Latitude", value=st.session_state.home_lat, format="%.4f")
     st.session_state.home_lon = st.number_input("Longitude", value=st.session_state.home_lon, format="%.4f")
 
     if st.button("💾 Remember Me on this Browser"):
         profile = {
-            "name": dxer_name, "city": dxer_city, "st": dxer_st, "ctry": dxer_ctry, 
+            "name": st.session_state.dx_name, "city": st.session_state.dx_city, 
+            "st": st.session_state.dx_st, "ctry": st.session_state.dx_ctry, 
             "lat": st.session_state.home_lat, "lon": st.session_state.home_lon
         }
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(profile)}));")
@@ -163,7 +185,14 @@ center_col.button("Clear All Filters", on_click=reset_all, use_container_width=T
 
 # --- 6. FILTER LOGIC & TABLE ---
 view_df = df_stations.copy()
-view_df['Dist'] = view_df.apply(lambda r: calculate_distance(st.session_state.home_lat, st.session_state.home_lon, dms_to_dd(r['Lat-N']), -dms_to_dd(r['Long-W'])), axis=1)
+
+def row_dist_safe(row):
+    lat_dest = dms_to_dd(row['Lat-N'])
+    lon_dest = dms_to_dd(row['Long-W'])
+    if lat_dest is None or lon_dest is None: return 0
+    return calculate_distance(st.session_state.home_lat, st.session_state.home_lon, lat_dest, -lon_dest)
+
+view_df['Dist'] = view_df.apply(row_dist_safe, axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
 
 if f_freq: view_df = view_df[view_df['Frequency'] == f_freq]
@@ -221,17 +250,17 @@ if selected_indices:
             prop = st.selectbox("Propagation", ["Local", "Tropo", "Es", "Meteor Scatter"])
             fmlist, wlogger = st.checkbox("Logged on FMList?"), st.checkbox("Logged on WLogger?")
         if st.form_submit_button("Submit Log Entry"):
-            if not dxer_name: st.error("Please enter your name in the sidebar!")
+            if not st.session_state.dx_name: st.error("Please enter your name in the sidebar!")
             elif st.session_state.home_lat == 0: st.error("Please set your location in the sidebar to calculate distance!")
             else:
                 try:
                     new_row = [
-                        dxer_name, dxer_city, dxer_st, dxer_ctry, 
+                        st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st, st.session_state.dx_ctry, 
                         station['Frequency'], station['Station Callsign'], station['Slogan'],
                         station['City'], station['State/Province'], station['Country'], "",
                         station['Format'], log_date.strftime("%m/%d/%Y"), log_time, 
                         station['Dist'], "", sig, rds_ready, pi_code, final_cat, prop,
-                        1 if fmlist else 0, 1 if wlogger else 0, 0, f"{dxer_name}{station['Frequency']}{station['Station Callsign']}"
+                        1 if fmlist else 0, 1 if wlogger else 0, 0, f"{st.session_state.dx_name}{station['Frequency']}{station['Station Callsign']}"
                     ]
                     sheet = get_gsheet()
                     sheet.append_row(new_row)
