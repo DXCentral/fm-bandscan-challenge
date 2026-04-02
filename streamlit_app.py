@@ -10,18 +10,21 @@ from streamlit_javascript import st_javascript
 
 # --- 1. CONFIG & DATA LOADING ---
 STATION_DATA = "FM Challenge - Station List and Data - WTFDA Data.csv"
+CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 
 @st.cache_data
 def load_stations():
     df = pd.read_csv(STATION_DATA)
-    # Clean Callsign: Strip -FM
     df['Station Callsign'] = df['Callsign'].str.replace(r'-FM$', '', regex=True)
-    # Force PI Code to string to prevent Scientific Notation
     df['PI Code'] = df['PI Code'].astype(str).replace('nan', '')
     df = df.rename(columns={'S/P': 'State/Province'})
     df['State/Province'] = df['State/Province'].fillna("Unknown")
     df['Country'] = df['Country'].fillna("Unknown")
     return df
+
+@st.cache_data
+def load_categories():
+    return pd.read_csv(CATEGORY_DATA)
 
 # --- 2. HELPERS: DISTANCE & LOCAL STORAGE ---
 def dms_to_dd(dms_str):
@@ -49,16 +52,14 @@ def get_gsheet():
 # --- 3. UI SETUP ---
 st.set_page_config(page_title="DX Central FM Logger", layout="wide")
 df_stations = load_stations()
+df_categories = load_categories()
 
 # --- 4. SIDEBAR WITH LOCAL STORAGE ---
 with st.sidebar:
     st.header("📍 DXer Profile")
-    
-    # JavaScript to pull from browser memory
     js_code = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_code)
     
-    # Default values logic
     s_name = saved_data.get("name", "") if isinstance(saved_data, dict) else ""
     s_city = saved_data.get("city", "Mandeville") if isinstance(saved_data, dict) else "Mandeville"
     s_st = saved_data.get("st", "LA") if isinstance(saved_data, dict) else "LA"
@@ -148,7 +149,15 @@ if not selected_rows.empty:
             pi_code = st.text_input("PI Code", value=station['PI Code'] if rds_ready == "Yes" else "")
             sig = st.text_input("Signal Strength (dBm)")
         with col_b:
-            cat = st.selectbox("Frequency Category", ["", "Open", "Fringe", "Semi-Local", "Local-HD", "Strong Local"], index=0)
+            # DYNAMIC CATEGORY DROPDOWN
+            cat_list = [""] + df_categories['Category'].tolist()
+            cat = st.selectbox("Frequency Category", cat_list, index=0)
+            
+            # SHOW DEFINITION IF SELECTED
+            if cat:
+                definition = df_categories[df_categories['Category'] == cat]['Definitions'].iloc[0]
+                st.caption(f"ℹ️ {definition}")
+
             prop = st.selectbox("Propagation", ["Local", "Tropo", "Es", "Meteor Scatter"])
             fmlist = st.checkbox("Logged on FMList?")
             wlogger = st.checkbox("Logged on WLogger?")
