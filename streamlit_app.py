@@ -40,7 +40,6 @@ def load_stations():
     df = df.rename(columns={'S/P': 'State/Province'})
     df['State/Province'] = df['State/Province'].fillna("Unknown")
     df['Country'] = df['Country'].fillna("Unknown")
-    # Ensure Format and Slogan aren't lost during load
     df['Format'] = df['Format'].fillna("")
     df['Slogan'] = df['Slogan'].fillna("")
     return df
@@ -59,7 +58,7 @@ def get_logged_stations_set():
         return set(str(row[5]).strip() + "-" + str(row[4]).strip() for row in vals[1:])
     except: return set()
 
-# --- 2. HELPERS ---
+# --- 2. HELPERS (RESTORED) ---
 def dms_to_dd(dms_str):
     if pd.isna(dms_str) or not isinstance(dms_str, str) or dms_str.strip() == "": return None
     try:
@@ -85,7 +84,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v40")
+        geolocator = Nominatim(user_agent="dx_central_logger_v41")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -96,7 +95,29 @@ def reverse_geocode(lat, lon):
             st.session_state["dx_ctry_val"] = addr.get('country', 'USA')
     except: pass
 
-# --- UI SETUP ---
+def update_from_grid():
+    grid = st.session_state.grid_input.strip()
+    if len(grid) >= 4:
+        try:
+            lat, lon = mh.to_location(grid)
+            st.session_state["home_lat_val"] = float(lat)
+            st.session_state["home_lon_val"] = float(lon)
+            reverse_geocode(lat, lon)
+        except: pass
+
+def update_from_search():
+    query = st.session_state.search_query.strip()
+    if query:
+        try:
+            geolocator = Nominatim(user_agent="dx_central_logger_v41")
+            loc = geolocator.geocode(query)
+            if loc:
+                st.session_state["home_lat_val"] = float(loc.latitude)
+                st.session_state["home_lon_val"] = float(loc.longitude)
+                reverse_geocode(loc.latitude, loc.longitude)
+        except: pass
+
+# --- 3. UI SETUP ---
 st.set_page_config(page_title="DX Central FM Logger", layout="wide")
 df_stations = load_stations()
 df_categories = load_categories()
@@ -168,11 +189,13 @@ if f_slogan: view_df = view_df[view_df['Slogan'].str.contains(f_slogan, case=Fal
 if f_status == "Logged Only": view_df = view_df[view_df['Already Logged'] == True]
 elif f_status == "Not Logged Only": view_df = view_df[view_df['Already Logged'] == False]
 view_df['Display Callsign'] = view_df.apply(lambda r: f"🟢 {r['Station Callsign']}" if r['Already Logged'] else r['Station Callsign'], axis=1)
+
 col_stats, col_export = st.columns([3, 1])
 col_stats.write(f"Showing {len(view_df)} stations:")
 if f_status == "Logged Only":
     csv_data = view_df.drop(columns=['Display Callsign', 'Already Logged']).to_csv(index=False).encode('utf-8')
     col_export.download_button(label="📥 Export Logs", data=csv_data, file_name=f"MyLogs.csv", mime='text/csv', use_container_width=True)
+
 view_df.insert(0, 'Select', False)
 st.data_editor(view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']], use_container_width=True, hide_index=True, column_config={"Select": st.column_config.CheckboxColumn("Log?"), "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"), "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center")}, disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'], key=f"ed_{st.session_state.filter_key}")
 
@@ -185,7 +208,9 @@ selected_idx = next((idx for idx, chg in ed_state["edited_rows"].items() if chg.
 if manual_mode or selected_idx is not None:
     if selected_idx is not None and not manual_mode:
         stn = view_df.iloc[selected_idx]
-        def_freq, def_call, def_city, def_sp, def_ctry, def_pi, def_dist, d_check = float(stn['Frequency']), str(stn['Station Callsign']), str(stn['City']), str(stn['State/Province']), str(stn['Country']), str(stn['PI Code']), float(stn['Dist']), stn['Already Logged']
+        def_freq, def_call = float(stn['Frequency']), str(stn['Station Callsign'])
+        def_city, def_sp, def_ctry = str(stn['City']), str(stn['State/Province']), str(stn['Country'])
+        def_pi, def_dist, d_check = str(stn['PI Code']), float(stn['Dist']), stn['Already Logged']
         def_slogan, def_format = str(stn['Slogan']), str(stn['Format'])
     else:
         def_freq, def_call, def_city, def_sp, def_ctry, def_pi, def_dist, d_check = 88.1, "", "", "", "", "", 0.0, False
@@ -203,7 +228,6 @@ if manual_mode or selected_idx is not None:
         
         with r4[0]:
             rds = st.selectbox("RDS Decode?", ["No", "Yes"])
-            # PI Code only shows if Manual Mode is ON
             log_pi = st.text_input("PI Code", value=def_pi) if manual_mode else def_pi
         with r4[1]:
             cat_d = st.selectbox("Category", [""] + df_categories['Display'].tolist())
@@ -216,7 +240,6 @@ if manual_mode or selected_idx is not None:
             if not st.session_state.dx_name_val or st.session_state.home_lat_val == 0: st.error("Complete Profile first!")
             else:
                 try:
-                    # MAPPING: A:Name, B:City, C:State, D:Country, E:Freq, F:Call, G:Slogan, H:StnCity, I:StnState, J:StnCountry, K:Coords, L:Format, M:Date...
                     row = [
                         st.session_state.dx_name_val, st.session_state.dx_city_val, st.session_state.dx_st_val, st.session_state.dx_ctry_val,
                         log_freq, log_call, def_slogan, log_city, log_sp, log_ctry, "", def_format,
