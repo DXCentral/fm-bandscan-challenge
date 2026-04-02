@@ -72,21 +72,17 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v14")
+        geolocator = Nominatim(user_agent="dx_central_logger_v15")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
             city_tags = ['city', 'town', 'village', 'hamlet', 'suburb', 'municipality']
-            found_city = ""
-            for tag in city_tags:
-                if tag in addr:
-                    found_city = addr[tag]
-                    break
+            found_city = next((addr[tag] for tag in city_tags if tag in addr), "")
             
-            # FORCE UPDATE SESSION STATE
-            st.session_state.dx_city = found_city
-            st.session_state.dx_st = addr.get('state', addr.get('province', ''))
-            st.session_state.dx_ctry = addr.get('country', 'USA')
+            # THE OVERRIDE: Update the widget keys directly
+            st.session_state["dx_city_val"] = found_city
+            st.session_state["dx_st_val"] = addr.get('state', addr.get('province', ''))
+            st.session_state["dx_ctry_val"] = addr.get('country', 'USA')
     except: pass
 
 def update_from_grid():
@@ -94,8 +90,8 @@ def update_from_grid():
     if len(grid) >= 4:
         try:
             lat, lon = mh.to_location(grid)
-            st.session_state.home_lat = float(lat)
-            st.session_state.home_lon = float(lon)
+            st.session_state["home_lat_val"] = float(lat)
+            st.session_state["home_lon_val"] = float(lon)
             reverse_geocode(lat, lon)
         except: pass
 
@@ -103,11 +99,11 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v14")
+            geolocator = Nominatim(user_agent="dx_central_logger_v15")
             loc = geolocator.geocode(query)
             if loc:
-                st.session_state.home_lat = float(loc.latitude)
-                st.session_state.home_lon = float(loc.longitude)
+                st.session_state["home_lat_val"] = float(loc.latitude)
+                st.session_state["home_lon_val"] = float(loc.longitude)
                 reverse_geocode(loc.latitude, loc.longitude)
         except: pass
 
@@ -122,18 +118,22 @@ with st.sidebar:
     js_code = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_code)
     
-    # Init state if needed
-    if 'dx_name' not in st.session_state:
+    # Initialize "Ghost Values" if not present
+    if 'dx_name_val' not in st.session_state:
         if isinstance(saved_data, dict):
-            st.session_state.dx_name = saved_data.get("name", "")
-            st.session_state.dx_city = saved_data.get("city", "")
-            st.session_state.dx_st = saved_data.get("st", "")
-            st.session_state.dx_ctry = saved_data.get("ctry", "USA")
-            st.session_state.home_lat = float(saved_data.get("lat", 0.0))
-            st.session_state.home_lon = float(saved_data.get("lon", 0.0))
+            st.session_state.dx_name_val = saved_data.get("name", "")
+            st.session_state.dx_city_val = saved_data.get("city", "")
+            st.session_state.dx_st_val = saved_data.get("st", "")
+            st.session_state.dx_ctry_val = saved_data.get("ctry", "USA")
+            st.session_state.home_lat_val = float(saved_data.get("lat", 0.0))
+            st.session_state.home_lon_val = float(saved_data.get("lon", 0.0))
         else:
-            st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st = "", "", ""
-            st.session_state.dx_ctry, st.session_state.home_lat, st.session_state.home_lon = "USA", 0.0, 0.0
+            st.session_state.dx_name_val = ""
+            st.session_state.dx_city_val = ""
+            st.session_state.dx_st_val = ""
+            st.session_state.dx_ctry_val = "USA"
+            st.session_state.home_lat_val = 0.0
+            st.session_state.home_lon_val = 0.0
 
     st.header("🛰️ 1. Set Your Location")
     loc_method = st.radio("Method", ["Grid Square", "City Search", "Manual Lat/Lon"], horizontal=True)
@@ -144,26 +144,25 @@ with st.sidebar:
         st.text_input("Enter City & State", key="search_query", placeholder="e.g. Mandeville, LA")
         st.button("Lookup Location", on_click=update_from_search)
 
-    # Use 'value' to show state, and 'key' only for the internal widget mechanics
-    st.session_state.home_lat = st.number_input("Latitude", value=st.session_state.home_lat, format="%.4f")
-    st.session_state.home_lon = st.number_input("Longitude", value=st.session_state.home_lon, format="%.4f")
+    # Coordinates (using the val state)
+    st.number_input("Latitude", key="home_lat_val", format="%.4f")
+    st.number_input("Longitude", key="home_lon_val", format="%.4f")
 
     st.divider()
 
     st.header("👤 2. DXer Profile")
-    # THE FIX: Tie 'value' parameter to session_state while using a separate key
-    st.session_state.dx_name = st.text_input("Your Name", value=st.session_state.dx_name)
+    st.text_input("Your Name", key="dx_name_val")
     
     col_c, col_s = st.columns([2, 1])
-    st.session_state.dx_city = col_c.text_input("City", value=st.session_state.dx_city)
-    st.session_state.dx_st = col_s.text_input("ST/Prov", value=st.session_state.dx_st)
-    st.session_state.dx_ctry = st.text_input("Country", value=st.session_state.dx_ctry)
+    col_c.text_input("City", key="dx_city_val")
+    col_s.text_input("ST/Prov", key="dx_st_val")
+    st.text_input("Country", key="dx_ctry_val")
 
     if st.button("💾 Remember Me on this Browser"):
         prof = {
-            "name": st.session_state.dx_name, "city": st.session_state.dx_city, 
-            "st": st.session_state.dx_st, "ctry": st.session_state.dx_ctry, 
-            "lat": st.session_state.home_lat, "lon": st.session_state.home_lon
+            "name": st.session_state.dx_name_val, "city": st.session_state.dx_city_val, 
+            "st": st.session_state.dx_st_val, "ctry": st.session_state.dx_ctry_val, 
+            "lat": st.session_state.home_lat_val, "lon": st.session_state.home_lon_val
         }
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(prof)}));")
         st.success("Profile & Location Saved!")
@@ -188,7 +187,7 @@ st.button("Clear All Filters", on_click=reset_all)
 view_df = df_stations.copy()
 def safe_dist(r):
     lat_d, lon_d = dms_to_dd(r['Lat-N']), dms_to_dd(r['Long-W'])
-    return calculate_distance(st.session_state.home_lat, st.session_state.home_lon, lat_d, -lon_d) if lat_d else 0
+    return calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, lat_d, -lon_d) if lat_d else 0
 
 view_df['Dist'] = view_df.apply(safe_dist, axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
@@ -239,10 +238,10 @@ if ed_state and "edited_rows" in ed_state:
                 prop = st.selectbox("Prop", ["Local", "Tropo", "Es", "MS"])
                 fml, wlo = st.checkbox("FMList?"), st.checkbox("WLogger?")
             if st.form_submit_button("Submit"):
-                if not st.session_state.dx_name or st.session_state.home_lat == 0: st.error("Complete sidebar profile first!")
+                if not st.session_state.dx_name_val or st.session_state.home_lat_val == 0: st.error("Complete sidebar profile first!")
                 else:
                     try:
-                        row = [st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st, st.session_state.dx_ctry, station['Frequency'], station['Station Callsign'], station['Slogan'], station['City'], station['State/Province'], station['Country'], "", station['Format'], l_date.strftime("%m/%d/%Y"), l_time, station['Dist'], "", sig, rds, pi, final_cat, prop, 1 if fml else 0, 1 if wlo else 0, 0, f"{st.session_state.dx_name}{station['Frequency']}{station['Station Callsign']}"]
+                        row = [st.session_state.dx_name_val, st.session_state.dx_city_val, st.session_state.dx_st_val, st.session_state.dx_ctry_val, station['Frequency'], station['Station Callsign'], station['Slogan'], station['City'], station['State/Province'], station['Country'], "", station['Format'], l_date.strftime("%m/%d/%Y"), l_time, station['Dist'], "", sig, rds, pi, final_cat, prop, 1 if fml else 0, 1 if wlo else 0, 0, f"{st.session_state.dx_name_val}{station['Frequency']}{station['Station Callsign']}"]
                         get_gsheet().append_row(row)
                         st.success("Log recorded!"); st.balloons(); st.rerun()
                     except Exception as e: st.error(f"Error: {e}")
