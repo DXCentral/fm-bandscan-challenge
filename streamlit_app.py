@@ -71,8 +71,9 @@ def get_gsheet():
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
 def reverse_geocode(lat, lon):
+    """Directly updates the session state for profile fields"""
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v10")
+        geolocator = Nominatim(user_agent="dx_central_logger_v12")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -83,7 +84,6 @@ def reverse_geocode(lat, lon):
                     found_city = addr[tag]
                     break
             
-            # Explicitly set session state
             st.session_state.dx_city = found_city
             st.session_state.dx_st = addr.get('state', addr.get('province', ''))
             st.session_state.dx_ctry = addr.get('country', 'USA')
@@ -94,7 +94,9 @@ def update_from_grid():
     if len(grid) >= 4:
         try:
             lat, lon = mh.to_location(grid)
-            st.session_state.home_lat, st.session_state.home_lon = lat, lon
+            # Update the coordinate state directly
+            st.session_state.home_lat = float(lat)
+            st.session_state.home_lon = float(lon)
             reverse_geocode(lat, lon)
         except: pass
 
@@ -102,10 +104,11 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v10")
+            geolocator = Nominatim(user_agent="dx_central_logger_v12")
             loc = geolocator.geocode(query)
             if loc:
-                st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
+                st.session_state.home_lat = float(loc.latitude)
+                st.session_state.home_lon = float(loc.longitude)
                 reverse_geocode(loc.latitude, loc.longitude)
         except: pass
 
@@ -121,6 +124,7 @@ with st.sidebar:
     js_code = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_code)
     
+    # Initialize session state keys
     if 'dx_name' not in st.session_state:
         if isinstance(saved_data, dict):
             st.session_state.dx_name = saved_data.get("name", "")
@@ -133,13 +137,12 @@ with st.sidebar:
             st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st = "", "", ""
             st.session_state.dx_ctry, st.session_state.home_lat, st.session_state.home_lon = "USA", 0.0, 0.0
 
-    # UI LOCK: We use 'value' parameter to force the display to match session state
-    st.text_input("Your Name", value=st.session_state.dx_name, key="dx_name_box", on_change=lambda: st.session_state.update(dx_name=st.session_state.dx_name_box))
-    
+    # Widgets tied to Session State via key
+    st.text_input("Your Name", key="dx_name")
     col_c, col_s = st.columns([2, 1])
-    col_c.text_input("City", value=st.session_state.dx_city, key="dx_city_box", on_change=lambda: st.session_state.update(dx_city=st.session_state.dx_city_box))
-    col_s.text_input("ST/Prov", value=st.session_state.dx_st, key="dx_st_box", on_change=lambda: st.session_state.update(dx_st=st.session_state.dx_st_box))
-    st.text_input("Country", value=st.session_state.dx_ctry, key="dx_ctry_box", on_change=lambda: st.session_state.update(dx_ctry=st.session_state.dx_ctry_box))
+    col_c.text_input("City", key="dx_city")
+    col_s.text_input("ST/Prov", key="dx_st")
+    st.text_input("Country", key="dx_ctry")
 
     st.divider()
     st.subheader("🛰️ Set Location")
@@ -147,15 +150,14 @@ with st.sidebar:
     
     if loc_method == "Grid Square":
         st.text_input("Enter Grid (e.g. EM40xi)", key="grid_input", on_change=update_from_grid, placeholder="XX##xx")
-        if st.session_state.home_lat != 0:
-            st.success(f"Coordinates: {st.session_state.home_lat:.4f}, {st.session_state.home_lon:.4f}")
 
     elif loc_method == "City Search":
         st.text_input("Enter City & State", key="search_query", placeholder="e.g. Mandeville, LA")
         st.button("Lookup Location", on_click=update_from_search)
 
-    st.number_input("Latitude", value=st.session_state.home_lat, key="home_lat_box", format="%.4f", on_change=lambda: st.session_state.update(home_lat=st.session_state.home_lat_box))
-    st.number_input("Longitude", value=st.session_state.home_lon, key="home_lon_box", format="%.4f", on_change=lambda: st.session_state.update(home_lon=st.session_state.home_lon_box))
+    # UNIFIED: The manual boxes now use the SAME keys as the automated functions
+    st.number_input("Latitude", key="home_lat", format="%.4f")
+    st.number_input("Longitude", key="home_lon", format="%.4f")
 
     if st.button("💾 Remember Me on this Browser"):
         prof = {
@@ -186,6 +188,7 @@ st.button("Clear All Filters", on_click=reset_all)
 view_df = df_stations.copy()
 def safe_dist(r):
     lat_d, lon_d = dms_to_dd(r['Lat-N']), dms_to_dd(r['Long-W'])
+    # Math uses the shared session state
     return calculate_distance(st.session_state.home_lat, st.session_state.home_lon, lat_d, -lon_d) if lat_d else 0
 
 view_df['Dist'] = view_df.apply(safe_dist, axis=1)
