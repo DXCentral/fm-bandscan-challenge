@@ -84,12 +84,12 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v48")
+        geolocator = Nominatim(user_agent="dx_central_logger_v49")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
             city_tags = ['city', 'town', 'village', 'hamlet', 'suburb', 'municipality']
-            found_city = next((addr[tag] for tag in city_tags if tag in addr), "")
+            found_city = addr.get('city', addr.get('town', addr.get('village', '')))
             st.session_state["dx_city_val"] = found_city
             st.session_state["dx_st_val"] = addr.get('state', addr.get('province', ''))
             st.session_state["dx_ctry_val"] = addr.get('country', 'USA')
@@ -109,7 +109,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v48")
+            geolocator = Nominatim(user_agent="dx_central_logger_v49")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -119,21 +119,13 @@ def update_from_search():
 
 # --- 3. UI SETUP ---
 st.set_page_config(page_title="DX Central FM Logger", layout="wide")
-
-# CSS to hide the data_editor toolbar (eye, download, search, fullscreen icons)
-st.markdown("""
-    <style>
-    [data-testid="stElementToolbar"] {
-        display: none;
-    }
-    </style>
-    """, unsafe_allow_html=True)
+st.markdown("<style>[data-testid='stElementToolbar'] {display: none;}</style>", unsafe_allow_html=True)
 
 df_stations = load_stations()
 df_categories = load_categories()
 logged_stations = get_logged_stations_set()
 
-# --- 4. SIDEBAR ---
+# --- 4. SIDEBAR (PROFILE & LOCATION) ---
 with st.sidebar:
     js_get = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_get)
@@ -145,6 +137,7 @@ with st.sidebar:
         st.session_state.home_lat_val = float(saved_data.get("lat", 0.0))
         st.session_state.home_lon_val = float(saved_data.get("lon", 0.0))
         st.session_state.initialized = True
+
     if 'dx_name_val' not in st.session_state:
         st.session_state.dx_name_val, st.session_state.dx_city_val, st.session_state.dx_st_val = "", "", ""
         st.session_state.dx_ctry_val, st.session_state.home_lat_val, st.session_state.home_lon_val = "USA", 0.0, 0.0
@@ -158,7 +151,6 @@ with st.sidebar:
         st.button("Lookup Location", on_click=update_from_search)
     st.number_input("Latitude", key="home_lat_val", format="%.4f")
     st.number_input("Longitude", key="home_lon_val", format="%.4f")
-    
     st.divider()
     st.header("👤 2. DXer Profile")
     st.text_input("Your Name", key="dx_name_val")
@@ -172,7 +164,6 @@ with st.sidebar:
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(prof)}));")
         st.session_state.initialized = True
         st.success("Profile Saved!")
-
     st.divider()
     with st.expander("📄 Privacy & Data Info"):
         st.caption("Profile data is stored locally. Logs are public.")
@@ -180,9 +171,26 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-# --- 5. SEARCH & FILTERS ---
+# --- 5. MAIN PAGE LOGIC (FAILSAFE) ---
+# CHECK IF PROFILE IS COMPLETE
+profile_complete = (
+    st.session_state.dx_name_val.strip() != "" and 
+    st.session_state.home_lat_val != 0.0 and 
+    st.session_state.home_lon_val != 0.0
+)
+
+if not profile_complete:
+    st.error("🛑 Action Required: Setup Your Profile")
+    st.info("To log stations, please open the **Sidebar Menu** (click the **>** arrow in the top-left on mobile) to enter your **Name** and **Location**.")
+    st.warning("Distance calculations and logging are disabled until your profile is set.")
+    st.stop() # Hides everything below this line
+else:
+    st.success(f"✅ Logged in as: **{st.session_state.dx_name_val}** | Location: **{st.session_state.dx_city_val}, {st.session_state.dx_st_val}**")
+
+# --- 6. SEARCH & FILTERS (Only shows if profile_complete is True) ---
 st.subheader("🔍 Station Search")
 st.caption("Station list and data is sourced from the Worldwide TV-FM DX Association Station Database at [db.wtfda.org](https://db.wtfda.org/)")
+
 if 'filter_key' not in st.session_state: st.session_state.filter_key = 0
 def reset_all(): st.session_state.filter_key += 1
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
@@ -196,7 +204,7 @@ f_slogan = c6.text_input("Slogan", key=f"f6_{st.session_state.filter_key}")
 f_status = c7.selectbox("Status", ["All", "Logged Only", "Not Logged Only"], index=0, key=f"f7_{st.session_state.filter_key}")
 st.button("Clear All Filters", on_click=reset_all)
 
-# --- 6. FILTER LOGIC & TABLE ---
+# --- 7. FILTER LOGIC & TABLE ---
 view_df = df_stations.copy()
 view_df['Dist'] = view_df.apply(lambda r: calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, dms_to_dd(r.get('Lat-N')), -dms_to_dd(r.get('Long-W')) if dms_to_dd(r.get('Long-W')) else None), axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
@@ -208,7 +216,6 @@ if f_country: view_df = view_df[view_df['Country'] == f_country]
 if f_slogan: view_df = view_df[view_df['Slogan'].str.contains(f_slogan, case=False, na=False)]
 if f_status == "Logged Only": view_df = view_df[view_df['Already Logged'] == True]
 elif f_status == "Not Logged Only": view_df = view_df[view_df['Already Logged'] == False]
-
 view_df['Display Callsign'] = view_df.apply(lambda r: f"🟢 {r['Station Callsign']}" if r['Already Logged'] else r['Station Callsign'], axis=1)
 
 col_stats, col_export = st.columns([3, 1])
@@ -220,28 +227,15 @@ if f_status == "Logged Only":
 view_df.insert(0, 'Select', False)
 st.data_editor(
     view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']], 
-    use_container_width=True, 
-    hide_index=True, 
-    column_config={
-        "Select": st.column_config.CheckboxColumn("Log?"),
-        "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"),
-        "Display Callsign": st.column_config.TextColumn(alignment="center"),
-        "City": st.column_config.TextColumn(alignment="center"),
-        "State/Province": st.column_config.TextColumn(alignment="center"),
-        "Country": st.column_config.TextColumn(alignment="center"),
-        "Slogan": st.column_config.TextColumn(alignment="center"),
-        "PI Code": st.column_config.TextColumn(alignment="center"),
-        "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"),
-        "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center")
-    }, 
+    use_container_width=True, hide_index=True, 
+    column_config={"Select": st.column_config.CheckboxColumn("Log?"), "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"), "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Display Callsign": st.column_config.TextColumn(alignment="center"), "City": st.column_config.TextColumn(alignment="center"), "State/Province": st.column_config.TextColumn(alignment="center"), "Country": st.column_config.TextColumn(alignment="center"), "Slogan": st.column_config.TextColumn(alignment="center"), "PI Code": st.column_config.TextColumn(alignment="center")}, 
     disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'], 
     key=f"ed_{st.session_state.filter_key}"
 )
 
-# --- 7. LOGGING FORM ---
+# --- 8. LOGGING FORM ---
 st.divider()
 st.markdown("<div id='log-form-anchor'></div>", unsafe_allow_html=True)
-
 manual_mode = st.toggle("🛠️ Manual Entry Mode (Unlisted / Open Frequency)")
 ed_state = st.session_state.get(f"ed_{st.session_state.filter_key}")
 selected_idx = next((idx for idx, chg in ed_state["edited_rows"].items() if chg.get("Select")), None) if ed_state and "edited_rows" in ed_state else None
@@ -249,7 +243,6 @@ selected_idx = next((idx for idx, chg in ed_state["edited_rows"].items() if chg.
 if manual_mode or selected_idx is not None:
     if selected_idx is not None:
         st_javascript("document.getElementById('log-form-anchor').scrollIntoView({behavior: 'smooth'});")
-
     if selected_idx is not None and not manual_mode:
         stn = view_df.iloc[selected_idx]
         def_freq, def_call = float(stn['Frequency']), str(stn['Station Callsign'])
@@ -269,7 +262,6 @@ if manual_mode or selected_idx is not None:
         log_call, log_city = r1[1].text_input("Callsign / ID", value=def_call), r1[2].text_input("Station City", value=def_city)
         log_sp, log_ctry, log_dist = r2[0].text_input("State/Prov", value=def_sp), r2[1].text_input("Country", value=def_ctry), r2[2].number_input("Dist (mi)", value=def_dist)
         l_date, l_time, sig = r3[0].date_input("Date (UTC)", value=now.date()), r3[1].text_input("Time (UTC)", value=now.strftime("%H%M")), r3[2].text_input("Signal (dBm)")
-        
         with r4[0]:
             rds = st.selectbox("RDS Decode?", ["No", "Yes"])
             log_pi = st.text_input("PI Code", value=def_pi) if manual_mode else def_pi
@@ -281,15 +273,13 @@ if manual_mode or selected_idx is not None:
             fml, wlo = st.checkbox("Submitted to FMList?"), st.checkbox("Submitted to WLogger?")
 
         if st.form_submit_button("Submit Log"):
-            if not st.session_state.dx_name_val or st.session_state.home_lat_val == 0: st.error("Complete Profile first!")
-            else:
-                try:
-                    row = [
-                        st.session_state.dx_name_val, st.session_state.dx_city_val, st.session_state.dx_st_val, st.session_state.dx_ctry_val,
-                        log_freq, log_call, def_slogan, log_city, log_sp, log_ctry, "", def_format,
-                        l_date.strftime("%m/%d/%Y"), l_time, log_dist, "", sig, rds, log_pi, final_cat, prop,
-                        1 if fml else 0, 1 if wlo else 0, 0, f"{st.session_state.dx_name_val}{log_freq}{log_call}"
-                    ]
-                    get_gsheet().append_row(row)
-                    st.success("Log recorded!"); st.balloons(); st.rerun()
-                except Exception as e: st.error(f"Error: {e}")
+            try:
+                row = [
+                    st.session_state.dx_name_val, st.session_state.dx_city_val, st.session_state.dx_st_val, st.session_state.dx_ctry_val,
+                    log_freq, log_call, def_slogan, log_city, log_sp, log_ctry, "", def_format,
+                    l_date.strftime("%m/%d/%Y"), l_time, log_dist, "", sig, rds, log_pi, final_cat, prop,
+                    1 if fml else 0, 1 if wlo else 0, 0, f"{st.session_state.dx_name_val}{log_freq}{log_call}"
+                ]
+                get_gsheet().append_row(row)
+                st.success("Log recorded!"); st.balloons(); st.rerun()
+            except Exception as e: st.error(f"Error: {e}")
