@@ -38,16 +38,19 @@ def load_categories():
     df['Display'] = df['Category'] + " - " + df['Definitions']
     return df
 
-# --- NEW: Fetch existing logs for highlighting/duplicates ---
-def get_existing_logs():
+# --- NEW: Robust Duplicate Checking ---
+def get_logged_stations_set():
+    """Returns a set of 'Callsign-Freq' strings from the GSheet by column index"""
     try:
         sheet = get_gsheet()
-        all_data = sheet.get_all_records()
-        if not all_data:
-            return pd.DataFrame()
-        return pd.DataFrame(all_data)
-    except:
-        return pd.DataFrame()
+        vals = sheet.get_all_values()
+        if len(vals) < 2: return set()
+        
+        # We look at Column Index 4 (Freq) and 5 (Callsign) based on our submission logic
+        # row[5] is Callsign, row[4] is Frequency
+        return set(str(row[5]).strip() + "-" + str(row[4]).strip() for row in vals[1:])
+    except Exception as e:
+        return set()
 
 # --- 2. HELPERS ---
 def dms_to_dd(dms_str):
@@ -77,8 +80,8 @@ st.set_page_config(page_title="DX Central FM Logger", layout="wide")
 df_stations = load_stations()
 df_categories = load_categories()
 
-# FETCH CURRENT LOGS (No Cache so it updates instantly)
-df_logs = get_existing_logs()
+# Fetch existing logs to mark them
+logged_stations = get_logged_stations_set()
 
 # --- 4. SIDEBAR ---
 with st.sidebar:
@@ -153,36 +156,32 @@ def get_row_dist(row):
 
 view_df['Dist'] = view_df.apply(get_row_dist, axis=1)
 
-# NEW: Determine if a station has already been logged (Green Highlight Logic)
-# We match based on Callsign and Frequency
-if not df_logs.empty:
-    # Build a set of "Callsign-Freq" strings for fast lookup
-    logged_set = set(df_logs['Callsign'].astype(str) + "-" + df_logs['Frequency'].astype(str))
-    view_df['Logged'] = (view_df['Station Callsign'].astype(str) + "-" + view_df['Frequency'].astype(str)).isin(logged_set)
-else:
-    view_df['Logged'] = False
+# LOGIC: Mark stations already logged
+def check_logged(row):
+    key = f"{str(row['Station Callsign']).strip()}-{str(row['Frequency']).strip()}"
+    return key in logged_stations
+
+view_df['Already Logged'] = view_df.apply(check_logged, axis=1)
+
+# Add a visual indicator to the Callsign for logged stations
+view_df['Station Callsign'] = view_df.apply(lambda r: f"🟢 {r['Station Callsign']}" if r['Already Logged'] else r['Station Callsign'], axis=1)
 
 st.write(f"Showing {len(view_df)} stations:")
 view_df.insert(0, 'Select', False)
 
-# TABLE STYLING
-def color_rows(row):
-    return ['background-color: #d4edda' if row.Logged else '' for _ in row]
-
-st.data_editor(
-    view_df[['Select', 'Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist', 'Logged']],
+edited_df = st.data_editor(
+    view_df[['Select', 'Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Already Logged', 'Slogan', 'PI Code', 'Dist']],
     use_container_width=True, hide_index=True,
     column_config={
         "Select": st.column_config.CheckboxColumn("Log?", default=False),
-        "Logged": st.column_config.CheckboxColumn("Previously Logged", disabled=True),
+        "Already Logged": st.column_config.CheckboxColumn("Status", disabled=True),
         "Frequency": st.column_config.NumberColumn(format="%.1f")
     },
-    disabled=['Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist', 'Logged'],
+    disabled=['Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist', 'Already Logged'],
     key=f"editor_{st.session_state.filter_key}"
 )
 
 # --- 7. LOGGING FORM ---
-# To get the selection from the data_editor, we check session state
 editor_state = st.session_state.get(f"editor_{st.session_state.filter_key}")
 selected_indices = []
 if editor_state and "edited_rows" in editor_state:
@@ -191,15 +190,14 @@ if editor_state and "edited_rows" in editor_state:
             selected_indices.append(idx)
 
 if selected_indices:
-    # Get the row from the filtered view_df
     selected_idx = view_df.index[selected_indices[0]]
     station = view_df.loc[selected_idx]
     
     st.divider()
-    
-    # NEW: DUPLICATE ALERT
-    if station['Logged']:
-        st.warning(f"⚠️ **Heads up!** You (or someone else) have already logged {station['Station Callsign']} on {station['Frequency']}. Submitting again will create a duplicate entry.")
+
+    # ALERT: Duplicate Check
+    if station['Already Logged']:
+        st.error(f"⚠️ **Duplicate Alert:** {station['Station Callsign']} on {station['Frequency']} has already been logged. Please only submit if this is a new reception (e.g., a different date/mode).")
 
     with st.form("log_entry", clear_on_submit=True):
         st.subheader(f"📝 Log: {station['Station Callsign']} ({station['Frequency']})")
@@ -227,19 +225,21 @@ if selected_indices:
                 st.error("Please enter your name in the sidebar!")
             else:
                 try:
+                    # Clean the 🟢 emoji from callsign before submitting to GSheet
+                    clean_call = str(station['Station Callsign']).replace("🟢 ", "")
+                    
                     new_row = [
                         dxer_name, dxer_city, dxer_st, dxer_ctry, 
-                        station['Frequency'], station['Station Callsign'], station['Slogan'],
+                        station['Frequency'], clean_call, station['Slogan'],
                         station['City'], station['State/Province'], station['Country'], "",
                         station['Format'], log_date.strftime("%m/%d/%Y"), log_time, 
                         station['Dist'], "", sig, rds_ready, pi_code, final_cat, prop,
-                        1 if fmlist else 0, 1 if wlogger else 0, 0, f"{dxer_name}{station['Frequency']}{station['Station Callsign']}"
+                        1 if fmlist else 0, 1 if wlogger else 0, 0, f"{dxer_name}{station['Frequency']}{clean_call}"
                     ]
                     sheet = get_gsheet()
                     sheet.append_row(new_row)
-                    st.success(f"Log recorded for {station['Station Callsign']}!")
+                    st.success(f"Log recorded!")
                     st.balloons()
-                    # Force a rerun to update the "Logged" highlights immediately
                     st.rerun()
                 except Exception as e:
                     st.error(f"GSheet Error: {e}")
