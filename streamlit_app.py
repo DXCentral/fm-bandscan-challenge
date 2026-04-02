@@ -70,40 +70,44 @@ def get_gsheet():
     client = gspread.authorize(creds)
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
-def update_profile_from_coords():
-    """Triggered via callback to update profile fields from Lat/Lon"""
-    lat, lon = st.session_state.home_lat, st.session_state.home_lon
-    if lat == 0 and lon == 0: return
+def reverse_geocode(lat, lon):
+    """Deep search for city name in address tags"""
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v9")
+        geolocator = Nominatim(user_agent="dx_central_logger_final")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
-            st.session_state.dx_city = addr.get('city', addr.get('town', addr.get('village', addr.get('suburb', ''))))
+            # List of possible tags for 'City' in order of priority
+            city_tags = ['city', 'town', 'village', 'hamlet', 'suburb', 'municipality']
+            found_city = ""
+            for tag in city_tags:
+                if tag in addr:
+                    found_city = addr[tag]
+                    break
+            
+            st.session_state.dx_city = found_city
             st.session_state.dx_st = addr.get('state', addr.get('province', ''))
             st.session_state.dx_ctry = addr.get('country', 'USA')
     except: pass
 
 def update_from_grid():
-    """Triggered when the Grid Square box changes"""
     grid = st.session_state.grid_input.strip()
     if len(grid) >= 4:
         try:
             lat, lon = mh.to_location(grid)
             st.session_state.home_lat, st.session_state.home_lon = lat, lon
-            update_profile_from_coords()
+            reverse_geocode(lat, lon)
         except: pass
 
 def update_from_search():
-    """Triggered when the City Search button is clicked"""
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v9")
+            geolocator = Nominatim(user_agent="dx_central_logger_final")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
-                update_profile_from_coords()
+                reverse_geocode(loc.latitude, loc.longitude)
         except: pass
 
 # --- 3. UI SETUP ---
@@ -141,7 +145,6 @@ with st.sidebar:
     loc_method = st.radio("Method", ["Grid Square", "City Search", "Manual Lat/Lon"], horizontal=True)
     
     if loc_method == "Grid Square":
-        # Using on_change callback to prevent the 'strobe' effect
         st.text_input("Enter Grid (e.g. EM40xi)", key="grid_input", on_change=update_from_grid, placeholder="XX##xx")
         if st.session_state.home_lat != 0:
             st.success(f"Coordinates: {st.session_state.home_lat:.4f}, {st.session_state.home_lon:.4f}")
