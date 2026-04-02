@@ -58,7 +58,7 @@ def get_logged_stations_set():
         return set(str(row[5]).strip() + "-" + str(row[4]).strip() for row in vals[1:])
     except: return set()
 
-# --- 2. HELPERS (RESTORED) ---
+# --- 2. HELPERS ---
 def dms_to_dd(dms_str):
     if pd.isna(dms_str) or not isinstance(dms_str, str) or dms_str.strip() == "": return None
     try:
@@ -84,7 +84,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v41")
+        geolocator = Nominatim(user_agent="dx_central_logger_v42")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -109,7 +109,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v41")
+            geolocator = Nominatim(user_agent="dx_central_logger_v42")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -138,6 +138,7 @@ with st.sidebar:
     if 'dx_name_val' not in st.session_state:
         st.session_state.dx_name_val, st.session_state.dx_city_val, st.session_state.dx_st_val = "", "", ""
         st.session_state.dx_ctry_val, st.session_state.home_lat_val, st.session_state.home_lon_val = "USA", 0.0, 0.0
+    
     st.header("🛰️ 1. Set Your Location")
     loc_method = st.radio("Method", ["Grid Square", "City Search", "Manual Lat/Lon"], horizontal=True)
     if loc_method == "Grid Square":
@@ -147,6 +148,7 @@ with st.sidebar:
         st.button("Lookup Location", on_click=update_from_search)
     st.number_input("Latitude", key="home_lat_val", format="%.4f")
     st.number_input("Longitude", key="home_lon_val", format="%.4f")
+    
     st.divider()
     st.header("👤 2. DXer Profile")
     st.text_input("Your Name", key="dx_name_val")
@@ -154,11 +156,26 @@ with st.sidebar:
     col_c.text_input("City", key="dx_city_val")
     col_s.text_input("ST/Prov", key="dx_st_val")
     st.text_input("Country", key="dx_ctry_val")
+    
     if st.button("💾 Remember Me"):
         prof = {"name": st.session_state.dx_name_val, "city": st.session_state.dx_city_val, "st": st.session_state.dx_st_val, "ctry": st.session_state.dx_ctry_val, "lat": st.session_state.home_lat_val, "lon": st.session_state.home_lon_val}
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(prof)}));")
         st.session_state.initialized = True
         st.success("Profile Saved!")
+
+    # RESTORED: Privacy Expander & Clear Cache
+    st.divider()
+    with st.expander("📄 Privacy & Data Info"):
+        st.caption("""
+        **Profile Data:** Clicking 'Remember Me' saves your name and location locally in your browser's storage. 
+        This is used only to autofill the form and calculate distances.
+        
+        **Logs:** Submitted logs are recorded publicly in the DX Central FM Challenge database.
+        """)
+
+    if st.button("🔄 Clear Data Cache"):
+        st.cache_data.clear()
+        st.rerun()
 
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
