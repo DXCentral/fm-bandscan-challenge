@@ -26,7 +26,10 @@ def load_stations():
 
 @st.cache_data
 def load_categories():
-    return pd.read_csv(CATEGORY_DATA)
+    df = pd.read_csv(CATEGORY_DATA)
+    # Create the combined string for the dropdown: "CATEGORY - Definition"
+    df['Display'] = df['Category'] + " - " + df['Definitions']
+    return df
 
 # --- 2. HELPERS: DISTANCE & LOCAL STORAGE ---
 def dms_to_dd(dms_str):
@@ -151,21 +154,12 @@ if not selected_rows.empty:
             pi_code = st.text_input("PI Code", value=station['PI Code'] if rds_ready == "Yes" else "")
             sig = st.text_input("Signal Strength (dBm)")
         with col_b:
-            # CATEGORY HELP LOGIC
-            cat_help_map = dict(zip(df_categories['Category'], df_categories['Definitions']))
-            full_legend = "\n".join([f"**{k}**: {v}" for k, v in cat_help_map.items()])
+            # CATEGORY LOGIC: Using the new 'Display' column for the selectbox
+            cat_list = [""] + df_categories['Display'].tolist()
+            cat_display = st.selectbox("Frequency Category & Definition", cat_list, index=0)
             
-            cat_list = [""] + df_categories['Category'].tolist()
-            cat = st.selectbox(
-                "Frequency Category", 
-                cat_list, 
-                index=0, 
-                help=f"**Category Definitions:**\n\n{full_legend}"
-            )
-            
-            # Show specific definition in blue info box if selected
-            if cat:
-                st.info(f"**{cat}**: {cat_help_map[cat]}")
+            # Extract just the Category name for the Google Sheet submission
+            final_cat = cat_display.split(" - ")[0] if cat_display else ""
 
             prop = st.selectbox("Propagation", ["Local", "Tropo", "Es", "Meteor Scatter"])
             fmlist = st.checkbox("Logged on FMList?")
@@ -181,12 +175,12 @@ if not selected_rows.empty:
                         station['Frequency'], station['Station Callsign'], station['Slogan'],
                         station['City'], station['State/Province'], station['Country'], "",
                         station['Format'], log_date.strftime("%m/%d/%Y"), log_time, 
-                        station['Dist'], "", sig, rds_ready, pi_code, cat, prop,
+                        station['Dist'], "", sig, rds_ready, pi_code, final_cat, prop,
                         1 if fmlist else 0, 1 if wlogger else 0, 0, f"{dxer_name}{station['Frequency']}{station['Station Callsign']}"
                     ]
                     sheet = get_gsheet()
                     sheet.append_row(new_row)
-                    st.success("Log recorded to Google Sheets!")
+                    st.success(f"Log recorded for {station['Station Callsign']}!")
                     st.balloons()
                 except Exception as e:
                     st.error(f"GSheet Error: {e}")
