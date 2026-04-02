@@ -71,9 +71,9 @@ def get_gsheet():
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
 def reverse_geocode(lat, lon):
-    """Directly updates the session state for profile fields"""
+    """Deep search for city name and update session state immediately"""
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v12")
+        geolocator = Nominatim(user_agent="dx_central_logger_v13")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -84,6 +84,7 @@ def reverse_geocode(lat, lon):
                     found_city = addr[tag]
                     break
             
+            # Direct update to the keys used by the text inputs
             st.session_state.dx_city = found_city
             st.session_state.dx_st = addr.get('state', addr.get('province', ''))
             st.session_state.dx_ctry = addr.get('country', 'USA')
@@ -94,7 +95,6 @@ def update_from_grid():
     if len(grid) >= 4:
         try:
             lat, lon = mh.to_location(grid)
-            # Update the coordinate state directly
             st.session_state.home_lat = float(lat)
             st.session_state.home_lon = float(lon)
             reverse_geocode(lat, lon)
@@ -104,7 +104,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v12")
+            geolocator = Nominatim(user_agent="dx_central_logger_v13")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state.home_lat = float(loc.latitude)
@@ -120,11 +120,11 @@ logged_stations = get_logged_stations_set()
 
 # --- 4. SIDEBAR ---
 with st.sidebar:
-    st.header("📍 DXer Profile")
+    # A. FETCH SAVED DATA
     js_code = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_code)
     
-    # Initialize session state keys
+    # B. INITIALIZE STATE (Only once)
     if 'dx_name' not in st.session_state:
         if isinstance(saved_data, dict):
             st.session_state.dx_name = saved_data.get("name", "")
@@ -137,27 +137,31 @@ with st.sidebar:
             st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st = "", "", ""
             st.session_state.dx_ctry, st.session_state.home_lat, st.session_state.home_lon = "USA", 0.0, 0.0
 
-    # Widgets tied to Session State via key
-    st.text_input("Your Name", key="dx_name")
-    col_c, col_s = st.columns([2, 1])
-    col_c.text_input("City", key="dx_city")
-    col_s.text_input("ST/Prov", key="dx_st")
-    st.text_input("Country", key="dx_ctry")
-
-    st.divider()
-    st.subheader("🛰️ Set Location")
+    # C. LOCATION FIRST (Rearranged)
+    st.header("🛰️ 1. Set Your Location")
     loc_method = st.radio("Method", ["Grid Square", "City Search", "Manual Lat/Lon"], horizontal=True)
     
     if loc_method == "Grid Square":
         st.text_input("Enter Grid (e.g. EM40xi)", key="grid_input", on_change=update_from_grid, placeholder="XX##xx")
-
     elif loc_method == "City Search":
         st.text_input("Enter City & State", key="search_query", placeholder="e.g. Mandeville, LA")
         st.button("Lookup Location", on_click=update_from_search)
 
-    # UNIFIED: The manual boxes now use the SAME keys as the automated functions
+    # Coordinates (Locked to State)
     st.number_input("Latitude", key="home_lat", format="%.4f")
     st.number_input("Longitude", key="home_lon", format="%.4f")
+
+    st.divider()
+
+    # D. PROFILE SECOND (Rearranged)
+    st.header("👤 2. DXer Profile")
+    st.text_input("Your Name", key="dx_name")
+    
+    # These will now follow the location updates instantly
+    col_c, col_s = st.columns([2, 1])
+    col_c.text_input("City", key="dx_city")
+    col_s.text_input("ST/Prov", key="dx_st")
+    st.text_input("Country", key="dx_ctry")
 
     if st.button("💾 Remember Me on this Browser"):
         prof = {
@@ -166,7 +170,12 @@ with st.sidebar:
             "lat": st.session_state.home_lat, "lon": st.session_state.home_lon
         }
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(prof)}));")
-        st.success("Profile Saved!")
+        st.success("Profile & Location Saved!")
+
+    st.divider()
+    if st.button("🔄 Clear Data Cache"):
+        st.cache_data.clear()
+        st.rerun()
 
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
@@ -188,7 +197,6 @@ st.button("Clear All Filters", on_click=reset_all)
 view_df = df_stations.copy()
 def safe_dist(r):
     lat_d, lon_d = dms_to_dd(r['Lat-N']), dms_to_dd(r['Long-W'])
-    # Math uses the shared session state
     return calculate_distance(st.session_state.home_lat, st.session_state.home_lon, lat_d, -lon_d) if lat_d else 0
 
 view_df['Dist'] = view_df.apply(safe_dist, axis=1)
