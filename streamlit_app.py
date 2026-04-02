@@ -18,11 +18,9 @@ CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 def load_stations():
     df = pd.read_csv(STATION_DATA, dtype=str)
     
-    # --- NEW: ERP POWER LOGIC ---
-    # Column J = ERP-H, Column K = ERP-V
+    # ERP POWER LOGIC: Column J = ERP-H, Column K = ERP-V
     df['ERP-H'] = pd.to_numeric(df['ERP-H'], errors='coerce').fillna(0)
     df['ERP-V'] = pd.to_numeric(df['ERP-V'], errors='coerce').fillna(0)
-    # Take the max of H or V to show the station's peak power
     df['Power (kW)'] = df[['ERP-H', 'ERP-V']].max(axis=1) / 1000
     
     def scrub_pi(val):
@@ -81,7 +79,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v33")
+        geolocator = Nominatim(user_agent="dx_central_logger_v34")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -106,12 +104,12 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v33")
+            geolocator = Nominatim(user_agent="dx_central_logger_v34")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
                 st.session_state["home_lon_val"] = float(loc.longitude)
-                update_profile_from_coords() # Manual lookup trigger
+                reverse_geocode(loc.latitude, loc.longitude)
         except: pass
 
 # --- 3. UI SETUP ---
@@ -159,26 +157,36 @@ with st.sidebar:
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(prof)}));")
         st.success("Profile Saved!")
 
+    # --- NEW: PRIVACY DISCLAIMER ---
+    st.divider()
+    with st.expander("📄 Privacy & Data Info"):
+        st.caption("""
+        **Profile Data:** Clicking 'Remember Me' saves your name and location locally in your browser's storage. 
+        This is used only to autofill the form and calculate distances. We do not use tracking cookies.
+        
+        **Logs:** Submitted logs are recorded publicly in the DX Central FM Challenge database for scoring and community sharing.
+        """)
+
+    if st.button("🔄 Clear Data Cache"):
+        st.cache_data.clear()
+        st.rerun()
+
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
-# --- NEW: CREDITS LINK ---
 st.caption("Station data is sourced from the Worldwide TV-FM DX Association (WTFDA) Database at [db.wtfda.org](https://db.wtfda.org/)")
 
 if 'filter_key' not in st.session_state: st.session_state.filter_key = 0
 def reset_all(): st.session_state.filter_key += 1
 
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
-# Get country selection first for cascading filter
 f_country = c5.selectbox("Country", sorted(df_stations['Country'].unique().tolist()), index=None, key=f"f5_{st.session_state.filter_key}")
 
-# --- NEW: CASCADING STATE FILTER ---
 if f_country:
     state_list = sorted(df_stations[df_stations['Country'] == f_country]['State/Province'].unique().tolist())
 else:
     state_list = sorted(df_stations['State/Province'].unique().tolist())
 
 f_sp = c4.selectbox("State/Prov", state_list, index=None, key=f"f4_{st.session_state.filter_key}")
-
 f_freq = c1.selectbox("Frequency", sorted(df_stations['Frequency'].unique()), index=None, key=f"f1_{st.session_state.filter_key}")
 f_call = c2.text_input("Callsign", key=f"f2_{st.session_state.filter_key}").upper()
 f_city = c3.text_input("City", key=f"f3_{st.session_state.filter_key}")
@@ -219,7 +227,6 @@ else:
 
 view_df.insert(0, 'Select', False)
 st.data_editor(
-    # ADDED 'Power (kW)' to the columns shown
     view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']],
     use_container_width=True, hide_index=True,
     column_config={
