@@ -15,7 +15,9 @@ CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 @st.cache_data
 def load_stations():
     df = pd.read_csv(STATION_DATA)
+    # Clean Callsign: Strip -FM
     df['Station Callsign'] = df['Callsign'].str.replace(r'-FM$', '', regex=True)
+    # Force PI Code to string to prevent Scientific Notation
     df['PI Code'] = df['PI Code'].astype(str).replace('nan', '')
     df = df.rename(columns={'S/P': 'State/Province'})
     df['State/Province'] = df['State/Province'].fillna("Unknown")
@@ -149,14 +151,21 @@ if not selected_rows.empty:
             pi_code = st.text_input("PI Code", value=station['PI Code'] if rds_ready == "Yes" else "")
             sig = st.text_input("Signal Strength (dBm)")
         with col_b:
-            # DYNAMIC CATEGORY DROPDOWN
-            cat_list = [""] + df_categories['Category'].tolist()
-            cat = st.selectbox("Frequency Category", cat_list, index=0)
+            # CATEGORY HELP LOGIC
+            cat_help_map = dict(zip(df_categories['Category'], df_categories['Definitions']))
+            full_legend = "\n".join([f"**{k}**: {v}" for k, v in cat_help_map.items()])
             
-            # SHOW DEFINITION IF SELECTED
+            cat_list = [""] + df_categories['Category'].tolist()
+            cat = st.selectbox(
+                "Frequency Category", 
+                cat_list, 
+                index=0, 
+                help=f"**Category Definitions:**\n\n{full_legend}"
+            )
+            
+            # Show specific definition in blue info box if selected
             if cat:
-                definition = df_categories[df_categories['Category'] == cat]['Definitions'].iloc[0]
-                st.caption(f"ℹ️ {definition}")
+                st.info(f"**{cat}**: {cat_help_map[cat]}")
 
             prop = st.selectbox("Propagation", ["Local", "Tropo", "Es", "Meteor Scatter"])
             fmlist = st.checkbox("Logged on FMList?")
