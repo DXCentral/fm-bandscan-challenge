@@ -17,10 +17,19 @@ CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 @st.cache_data
 def load_stations():
     df = pd.read_csv(STATION_DATA, dtype=str)
-    # ERP POWER LOGIC
-    df['ERP-H'] = pd.to_numeric(df['ERP-H'], errors='coerce').fillna(0)
-    df['ERP-V'] = pd.to_numeric(df['ERP-V'], errors='coerce').fillna(0)
-    df['Power (kW)'] = df[['ERP-H', 'ERP-V']].max(axis=1) / 1000
+    
+    # --- UPDATED ERP POWER LOGIC (Treating input as direct kW) ---
+    def clean_kw(val):
+        try:
+            if pd.isna(val) or str(val).strip() == "": return 0.0
+            return float(str(val).strip())
+        except: return 0.0
+
+    df['ERP-H_val'] = df['ERP-H'].apply(clean_kw)
+    df['ERP-V_val'] = df['ERP-V'].apply(clean_kw)
+    
+    # Take the max and round to 2 decimals (to keep 00.17 precision)
+    df['Power (kW)'] = df[['ERP-H_val', 'ERP-V_val']].max(axis=1).round(2)
     
     def scrub_pi(val):
         if pd.isna(val) or val == 'nan' or val == '': return ""
@@ -62,7 +71,6 @@ def dms_to_dd(dms_str):
     except: return None
 
 def calculate_distance(lat1, lon1, lat2, lon2):
-    # CRASH PROTECTION: If any coordinate is missing, return 0 instead of erroring
     if any(v is None for v in [lat1, lon1, lat2, lon2]): return 0.0
     if lat1 == 0 and lon1 == 0: return 0.0
     R = 3958.8 
@@ -79,7 +87,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v36")
+        geolocator = Nominatim(user_agent="dx_central_logger_v38")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -104,7 +112,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v36")
+            geolocator = Nominatim(user_agent="dx_central_logger_v38")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -122,7 +130,6 @@ logged_stations = get_logged_stations_set()
 with st.sidebar:
     js_get = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_get)
-    
     if saved_data and not st.session_state.get('initialized'):
         st.session_state.dx_name_val = saved_data.get("name", "")
         st.session_state.dx_city_val = saved_data.get("city", "")
@@ -161,6 +168,14 @@ with st.sidebar:
         st.session_state.initialized = True
         st.success("Profile Saved!")
 
+    st.divider()
+    with st.expander("📄 Privacy & Data Info"):
+        st.caption("Profile data is stored locally in your browser. Logs are public.")
+
+    if st.button("🔄 Clear Data Cache"):
+        st.cache_data.clear()
+        st.rerun()
+
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
 st.caption("Station data is sourced from WTFDA [db.wtfda.org](https://db.wtfda.org/)")
@@ -184,7 +199,6 @@ st.button("Clear All Filters", on_click=reset_all)
 view_df = df_stations.copy()
 
 def safe_calc_dist(r):
-    # FIXED: Added safe retrieval for coordinates to prevent TypeError
     lat_d = dms_to_dd(r.get('Lat-N'))
     lon_d = dms_to_dd(r.get('Long-W'))
     return calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, lat_d, -lon_d if lon_d is not None else None)
@@ -213,7 +227,18 @@ view_df.insert(0, 'Select', False)
 st.data_editor(
     view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']],
     use_container_width=True, hide_index=True,
-    column_config={"Select": st.column_config.CheckboxColumn("Log?"), "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Power (kW)": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Display Callsign": st.column_config.TextColumn(alignment="center"), "City": st.column_config.TextColumn(alignment="center"), "State/Province": st.column_config.TextColumn(alignment="center"), "Country": st.column_config.TextColumn(alignment="center"), "Slogan": st.column_config.TextColumn(alignment="center"), "PI Code": st.column_config.TextColumn(alignment="center")},
+    column_config={
+        "Select": st.column_config.CheckboxColumn("Log?"),
+        "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"),
+        "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"), # Set to .2f for low-power precision
+        "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center"),
+        "Display Callsign": st.column_config.TextColumn(alignment="center"),
+        "City": st.column_config.TextColumn(alignment="center"),
+        "State/Province": st.column_config.TextColumn(alignment="center"),
+        "Country": st.column_config.TextColumn(alignment="center"),
+        "Slogan": st.column_config.TextColumn(alignment="center"),
+        "PI Code": st.column_config.TextColumn(alignment="center")
+    },
     disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'],
     key=f"ed_{st.session_state.filter_key}"
 )
@@ -239,7 +264,7 @@ if manual_mode or selected_idx is not None:
         log_freq = r1[0].number_input("Frequency", value=def_freq, format="%.1f", step=0.1)
         log_call, log_city = r1[1].text_input("Callsign / ID", value=def_call), r1[2].text_input("Station City", value=def_city)
         log_sp, log_ctry, log_dist = r2[0].text_input("Station State/Prov", value=def_sp), r2[1].text_input("Station Country", value=def_ctry), r2[2].number_input("Distance (mi)", value=def_dist)
-        l_date, l_time, sig = r3[0].date_input("Date (UTC)", value=now.date()), r3[1].text_input("Time (UTC)", value=now.strftime("%H%M")), r3[2].text_input("Signal (dBm)")
+        l_date, l_time, sig = r3[0].date_input("Date (UTC)", value=now.date()), r3[1].text_input("Time (UTC)", value=now.strftime("%H%M")), r3[2].text_input("Signal Strength (dBm)")
         with r4[0]: rds = st.selectbox("RDS?", ["No", "Yes"]); pi = st.text_input("PI Code", value=def_pi if rds == "Yes" else "")
         with r4[1]: cat_d = st.selectbox("Category", [""] + df_categories['Display'].tolist()); final_cat, prop = cat_d.split(" - ")[0] if cat_d else "", st.selectbox("Prop", ["Local", "Tropo", "Es", "MS"])
         with r4[2]: st.write("**Bonus Points:**"); fml, wlo = st.checkbox("FMList?"), st.checkbox("WLogger?")
