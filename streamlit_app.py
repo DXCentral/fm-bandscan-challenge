@@ -71,9 +71,8 @@ def get_gsheet():
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
 def reverse_geocode(lat, lon):
-    """Deep search for city name and update session state immediately"""
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v13")
+        geolocator = Nominatim(user_agent="dx_central_logger_v14")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -84,7 +83,7 @@ def reverse_geocode(lat, lon):
                     found_city = addr[tag]
                     break
             
-            # Direct update to the keys used by the text inputs
+            # FORCE UPDATE SESSION STATE
             st.session_state.dx_city = found_city
             st.session_state.dx_st = addr.get('state', addr.get('province', ''))
             st.session_state.dx_ctry = addr.get('country', 'USA')
@@ -104,7 +103,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v13")
+            geolocator = Nominatim(user_agent="dx_central_logger_v14")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state.home_lat = float(loc.latitude)
@@ -120,11 +119,10 @@ logged_stations = get_logged_stations_set()
 
 # --- 4. SIDEBAR ---
 with st.sidebar:
-    # A. FETCH SAVED DATA
     js_code = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_code)
     
-    # B. INITIALIZE STATE (Only once)
+    # Init state if needed
     if 'dx_name' not in st.session_state:
         if isinstance(saved_data, dict):
             st.session_state.dx_name = saved_data.get("name", "")
@@ -137,7 +135,6 @@ with st.sidebar:
             st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st = "", "", ""
             st.session_state.dx_ctry, st.session_state.home_lat, st.session_state.home_lon = "USA", 0.0, 0.0
 
-    # C. LOCATION FIRST (Rearranged)
     st.header("🛰️ 1. Set Your Location")
     loc_method = st.radio("Method", ["Grid Square", "City Search", "Manual Lat/Lon"], horizontal=True)
     
@@ -147,21 +144,20 @@ with st.sidebar:
         st.text_input("Enter City & State", key="search_query", placeholder="e.g. Mandeville, LA")
         st.button("Lookup Location", on_click=update_from_search)
 
-    # Coordinates (Locked to State)
-    st.number_input("Latitude", key="home_lat", format="%.4f")
-    st.number_input("Longitude", key="home_lon", format="%.4f")
+    # Use 'value' to show state, and 'key' only for the internal widget mechanics
+    st.session_state.home_lat = st.number_input("Latitude", value=st.session_state.home_lat, format="%.4f")
+    st.session_state.home_lon = st.number_input("Longitude", value=st.session_state.home_lon, format="%.4f")
 
     st.divider()
 
-    # D. PROFILE SECOND (Rearranged)
     st.header("👤 2. DXer Profile")
-    st.text_input("Your Name", key="dx_name")
+    # THE FIX: Tie 'value' parameter to session_state while using a separate key
+    st.session_state.dx_name = st.text_input("Your Name", value=st.session_state.dx_name)
     
-    # These will now follow the location updates instantly
     col_c, col_s = st.columns([2, 1])
-    col_c.text_input("City", key="dx_city")
-    col_s.text_input("ST/Prov", key="dx_st")
-    st.text_input("Country", key="dx_ctry")
+    st.session_state.dx_city = col_c.text_input("City", value=st.session_state.dx_city)
+    st.session_state.dx_st = col_s.text_input("ST/Prov", value=st.session_state.dx_st)
+    st.session_state.dx_ctry = st.text_input("Country", value=st.session_state.dx_ctry)
 
     if st.button("💾 Remember Me on this Browser"):
         prof = {
@@ -171,11 +167,6 @@ with st.sidebar:
         }
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(prof)}));")
         st.success("Profile & Location Saved!")
-
-    st.divider()
-    if st.button("🔄 Clear Data Cache"):
-        st.cache_data.clear()
-        st.rerun()
 
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
