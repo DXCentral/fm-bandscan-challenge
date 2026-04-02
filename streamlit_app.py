@@ -72,7 +72,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v4")
+        geolocator = Nominatim(user_agent="dx_central_logger_v5")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -116,22 +116,23 @@ with st.sidebar:
     loc_method = st.radio("Method", ["Grid Square", "City Search", "Manual Lat/Lon"], horizontal=True)
     
     if loc_method == "Grid Square":
-        grid_input = st.text_input("Enter Grid Square (e.g. EM40xi)", placeholder="XX##xx")
-        if grid_input:
+        grid_input = st.text_input("Enter Grid (e.g. EM40xi)", placeholder="XX##xx")
+        if grid_input and len(grid_input) >= 4:
             try:
-                # Force formatting: First two Upper, next two Number, last two Lower
-                clean_grid = grid_input[:2].upper() + grid_input[2:4] + grid_input[4:].lower()
+                # Standardize grid string format for the library
+                g = grid_input.strip()
+                clean_grid = g[:2].upper() + g[2:4] + g[4:].lower()
                 lat, lon = mh.toLoc(clean_grid)
                 st.session_state.home_lat, st.session_state.home_lon = lat, lon
                 reverse_geocode(lat, lon)
                 st.success(f"Grid Set: {lat:.4f}, {lon:.4f}")
-            except: 
-                st.error("Grid Square format error. Try just the first 4 (e.g., EM40).")
+            except Exception: 
+                st.info("Still typing or invalid grid...")
 
     elif loc_method == "City Search":
         search_query = st.text_input("Enter City & State", placeholder="e.g. Mandeville, LA")
         if st.button("Lookup Location"):
-            geolocator = Nominatim(user_agent="dx_central_logger_v4")
+            geolocator = Nominatim(user_agent="dx_central_logger_v5")
             loc = geolocator.geocode(search_query)
             if loc:
                 st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
@@ -139,6 +140,7 @@ with st.sidebar:
                 st.success(f"Found: {loc.latitude:.4f}, {loc.longitude:.4f}")
             else: st.error("Location not found.")
 
+    # Manual inputs show the current state and allow fine-tuning
     st.session_state.home_lat = st.number_input("Latitude", value=st.session_state.home_lat, format="%.4f")
     st.session_state.home_lon = st.number_input("Longitude", value=st.session_state.home_lon, format="%.4f")
 
@@ -171,11 +173,10 @@ st.button("Clear All Filters", on_click=reset_all)
 view_df = df_stations.copy()
 
 def safe_dist(r):
-    # Fixed coordinate retrieval: Stations in WTFDA are Long-W (positive), 
-    # so we flip to negative for standard decimal degrees math.
     lat_d = dms_to_dd(r['Lat-N'])
     lon_d = dms_to_dd(r['Long-W'])
     if lat_d is None or lon_d is None: return 0
+    # Standard: WTFDA Long-W is positive, flip to negative for calculation
     return calculate_distance(st.session_state.home_lat, st.session_state.home_lon, lat_d, -lon_d)
 
 view_df['Dist'] = view_df.apply(safe_dist, axis=1)
