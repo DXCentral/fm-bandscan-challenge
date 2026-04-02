@@ -70,17 +70,41 @@ def get_gsheet():
     client = gspread.authorize(creds)
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
-def reverse_geocode(lat, lon):
+def update_profile_from_coords():
+    """Triggered via callback to update profile fields from Lat/Lon"""
+    lat, lon = st.session_state.home_lat, st.session_state.home_lon
+    if lat == 0 and lon == 0: return
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v8")
+        geolocator = Nominatim(user_agent="dx_central_logger_v9")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
-            # Update session state directly
             st.session_state.dx_city = addr.get('city', addr.get('town', addr.get('village', addr.get('suburb', ''))))
             st.session_state.dx_st = addr.get('state', addr.get('province', ''))
             st.session_state.dx_ctry = addr.get('country', 'USA')
     except: pass
+
+def update_from_grid():
+    """Triggered when the Grid Square box changes"""
+    grid = st.session_state.grid_input.strip()
+    if len(grid) >= 4:
+        try:
+            lat, lon = mh.to_location(grid)
+            st.session_state.home_lat, st.session_state.home_lon = lat, lon
+            update_profile_from_coords()
+        except: pass
+
+def update_from_search():
+    """Triggered when the City Search button is clicked"""
+    query = st.session_state.search_query.strip()
+    if query:
+        try:
+            geolocator = Nominatim(user_agent="dx_central_logger_v9")
+            loc = geolocator.geocode(query)
+            if loc:
+                st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
+                update_profile_from_coords()
+        except: pass
 
 # --- 3. UI SETUP ---
 st.set_page_config(page_title="DX Central FM Logger", layout="wide")
@@ -94,7 +118,6 @@ with st.sidebar:
     js_code = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_code)
     
-    # Initialize session states if not already present
     if 'dx_name' not in st.session_state:
         if isinstance(saved_data, dict):
             st.session_state.dx_name = saved_data.get("name", "")
@@ -107,10 +130,8 @@ with st.sidebar:
             st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st = "", "", ""
             st.session_state.dx_ctry, st.session_state.home_lat, st.session_state.home_lon = "USA", 0.0, 0.0
 
-    # Fields linked to session state
     st.text_input("Your Name", key="dx_name")
     col_c, col_s = st.columns([2, 1])
-    # Note: Value is derived from the key in session state
     col_c.text_input("City", key="dx_city")
     col_s.text_input("ST/Prov", key="dx_st")
     st.text_input("Country", key="dx_ctry")
@@ -120,32 +141,17 @@ with st.sidebar:
     loc_method = st.radio("Method", ["Grid Square", "City Search", "Manual Lat/Lon"], horizontal=True)
     
     if loc_method == "Grid Square":
-        grid_input = st.text_input("Enter Grid (e.g. EM40xi)", placeholder="XX##xx")
-        if grid_input and len(grid_input) >= 4:
-            try:
-                lat, lon = mh.to_location(grid_input.strip())
-                st.session_state.home_lat, st.session_state.home_lon = lat, lon
-                reverse_geocode(lat, lon)
-                st.success(f"Grid {grid_input.upper()} Set: {lat:.4f}, {lon:.4f}")
-                # Rerun to force the City/State fields to refresh with the new session state values
-                st.rerun()
-            except Exception: 
-                st.info("Searching for valid grid...")
+        # Using on_change callback to prevent the 'strobe' effect
+        st.text_input("Enter Grid (e.g. EM40xi)", key="grid_input", on_change=update_from_grid, placeholder="XX##xx")
+        if st.session_state.home_lat != 0:
+            st.success(f"Coordinates: {st.session_state.home_lat:.4f}, {st.session_state.home_lon:.4f}")
 
     elif loc_method == "City Search":
-        search_query = st.text_input("Enter City & State", placeholder="e.g. Mandeville, LA")
-        if st.button("Lookup Location"):
-            geolocator = Nominatim(user_agent="dx_central_logger_v8")
-            loc = geolocator.geocode(search_query)
-            if loc:
-                st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
-                reverse_geocode(loc.latitude, loc.longitude)
-                st.success(f"Found: {loc.latitude:.4f}, {loc.longitude:.4f}")
-                st.rerun()
-            else: st.error("Location not found.")
+        st.text_input("Enter City & State", key="search_query", placeholder="e.g. Mandeville, LA")
+        st.button("Lookup Location", on_click=update_from_search)
 
-    st.session_state.home_lat = st.number_input("Latitude", value=st.session_state.home_lat, format="%.4f")
-    st.session_state.home_lon = st.number_input("Longitude", value=st.session_state.home_lon, format="%.4f")
+    st.number_input("Latitude", key="home_lat", format="%.4f")
+    st.number_input("Longitude", key="home_lon", format="%.4f")
 
     if st.button("💾 Remember Me on this Browser"):
         prof = {
