@@ -84,7 +84,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v46")
+        geolocator = Nominatim(user_agent="dx_central_logger_v47")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -109,7 +109,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v46")
+            geolocator = Nominatim(user_agent="dx_central_logger_v47")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -231,17 +231,17 @@ st.data_editor(
 # --- 7. LOGGING FORM ---
 st.divider()
 
-# ADDED: Invisible Anchor to scroll to when a station is selected
-st.markdown("<div id='log-form'></div>", unsafe_allow_html=True)
+# Anchor for the log form
+st.markdown("<div id='log-form-anchor'></div>", unsafe_allow_html=True)
 
 manual_mode = st.toggle("🛠️ Manual Entry Mode (Unlisted / Open Frequency)")
 ed_state = st.session_state.get(f"ed_{st.session_state.filter_key}")
 selected_idx = next((idx for idx, chg in ed_state["edited_rows"].items() if chg.get("Select")), None) if ed_state and "edited_rows" in ed_state else None
 
 if manual_mode or selected_idx is not None:
-    # ADDED: If a station is selected, trigger the scroll jump
+    # UPDATED: Using JS to force scroll to the anchor immediately upon selection
     if selected_idx is not None:
-        st.markdown('<script>window.location.hash = "log-form";</script>', unsafe_allow_html=True)
+        st_javascript("document.getElementById('log-form-anchor').scrollIntoView({behavior: 'smooth'});")
 
     if selected_idx is not None and not manual_mode:
         stn = view_df.iloc[selected_idx]
