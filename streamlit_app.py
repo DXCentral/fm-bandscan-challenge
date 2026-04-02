@@ -14,11 +14,15 @@ CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 
 @st.cache_data
 def load_stations():
-    df = pd.read_csv(STATION_DATA)
+    # AGGRESSIVE FIX: Force PI Code to be read as a string immediately
+    df = pd.read_csv(STATION_DATA, dtype={'PI Code': str})
+    
     # Clean Callsign: Strip -FM
     df['Station Callsign'] = df['Callsign'].str.replace(r'-FM$', '', regex=True)
-    # Force PI Code to string to prevent Scientific Notation
-    df['PI Code'] = df['PI Code'].astype(str).replace('nan', '')
+    
+    # CLEAN PI CODE: Remove 'nan' and ensure no '.0' decimal points appear
+    df['PI Code'] = df['PI Code'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True)
+    
     df = df.rename(columns={'S/P': 'State/Province'})
     df['State/Province'] = df['State/Province'].fillna("Unknown")
     df['Country'] = df['Country'].fillna("Unknown")
@@ -27,7 +31,7 @@ def load_stations():
 @st.cache_data
 def load_categories():
     df = pd.read_csv(CATEGORY_DATA)
-    # Create the combined string for the dropdown: "CATEGORY - Definition"
+    # Combine Category + Definition for the dropdown
     df['Display'] = df['Category'] + " - " + df['Definitions']
     return df
 
@@ -128,10 +132,15 @@ view_df['Dist'] = view_df.apply(get_row_dist, axis=1)
 st.write(f"Showing {len(view_df)} stations:")
 view_df.insert(0, 'Select', False)
 
+# Aggressive formatting in the table itself
 edited_df = st.data_editor(
     view_df[['Select', 'Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist']],
     use_container_width=True, hide_index=True,
-    column_config={"Select": st.column_config.CheckboxColumn("Log?", default=False)},
+    column_config={
+        "Select": st.column_config.CheckboxColumn("Log?", default=False),
+        "PI Code": st.column_config.TextColumn("PI Code"), # Explicitly set as Text
+        "Frequency": st.column_config.NumberColumn(format="%.1f")
+    },
     disabled=['Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist'],
     key=f"editor_{st.session_state.filter_key}"
 )
@@ -151,14 +160,12 @@ if not selected_rows.empty:
         col_a, col_b = st.columns(2)
         with col_a:
             rds_ready = st.selectbox("RDS Decoded?", ["No", "Yes"])
-            pi_code = st.text_input("PI Code", value=station['PI Code'] if rds_ready == "Yes" else "")
+            # Force the form to show PI Code as plain text
+            pi_code = st.text_input("PI Code", value=str(station['PI Code']) if rds_ready == "Yes" else "")
             sig = st.text_input("Signal Strength (dBm)")
         with col_b:
-            # CATEGORY LOGIC: Using the new 'Display' column for the selectbox
             cat_list = [""] + df_categories['Display'].tolist()
             cat_display = st.selectbox("Frequency Category & Definition", cat_list, index=0)
-            
-            # Extract just the Category name for the Google Sheet submission
             final_cat = cat_display.split(" - ")[0] if cat_display else ""
 
             prop = st.selectbox("Propagation", ["Local", "Tropo", "Es", "Meteor Scatter"])
