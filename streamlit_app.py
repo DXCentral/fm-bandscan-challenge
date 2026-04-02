@@ -71,13 +71,11 @@ def get_gsheet():
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
 def reverse_geocode(lat, lon):
-    """Deep search for city name in address tags"""
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_final")
+        geolocator = Nominatim(user_agent="dx_central_logger_v10")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
-            # List of possible tags for 'City' in order of priority
             city_tags = ['city', 'town', 'village', 'hamlet', 'suburb', 'municipality']
             found_city = ""
             for tag in city_tags:
@@ -85,6 +83,7 @@ def reverse_geocode(lat, lon):
                     found_city = addr[tag]
                     break
             
+            # Explicitly set session state
             st.session_state.dx_city = found_city
             st.session_state.dx_st = addr.get('state', addr.get('province', ''))
             st.session_state.dx_ctry = addr.get('country', 'USA')
@@ -103,7 +102,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_final")
+            geolocator = Nominatim(user_agent="dx_central_logger_v10")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
@@ -134,11 +133,13 @@ with st.sidebar:
             st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st = "", "", ""
             st.session_state.dx_ctry, st.session_state.home_lat, st.session_state.home_lon = "USA", 0.0, 0.0
 
-    st.text_input("Your Name", key="dx_name")
+    # UI LOCK: We use 'value' parameter to force the display to match session state
+    st.text_input("Your Name", value=st.session_state.dx_name, key="dx_name_box", on_change=lambda: st.session_state.update(dx_name=st.session_state.dx_name_box))
+    
     col_c, col_s = st.columns([2, 1])
-    col_c.text_input("City", key="dx_city")
-    col_s.text_input("ST/Prov", key="dx_st")
-    st.text_input("Country", key="dx_ctry")
+    col_c.text_input("City", value=st.session_state.dx_city, key="dx_city_box", on_change=lambda: st.session_state.update(dx_city=st.session_state.dx_city_box))
+    col_s.text_input("ST/Prov", value=st.session_state.dx_st, key="dx_st_box", on_change=lambda: st.session_state.update(dx_st=st.session_state.dx_st_box))
+    st.text_input("Country", value=st.session_state.dx_ctry, key="dx_ctry_box", on_change=lambda: st.session_state.update(dx_ctry=st.session_state.dx_ctry_box))
 
     st.divider()
     st.subheader("🛰️ Set Location")
@@ -153,8 +154,8 @@ with st.sidebar:
         st.text_input("Enter City & State", key="search_query", placeholder="e.g. Mandeville, LA")
         st.button("Lookup Location", on_click=update_from_search)
 
-    st.number_input("Latitude", key="home_lat", format="%.4f")
-    st.number_input("Longitude", key="home_lon", format="%.4f")
+    st.number_input("Latitude", value=st.session_state.home_lat, key="home_lat_box", format="%.4f", on_change=lambda: st.session_state.update(home_lat=st.session_state.home_lat_box))
+    st.number_input("Longitude", value=st.session_state.home_lon, key="home_lon_box", format="%.4f", on_change=lambda: st.session_state.update(home_lon=st.session_state.home_lon_box))
 
     if st.button("💾 Remember Me on this Browser"):
         prof = {
