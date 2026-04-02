@@ -14,15 +14,23 @@ CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 
 @st.cache_data
 def load_stations():
-    # AGGRESSIVE FIX: Force PI Code to be read as a string immediately
-    df = pd.read_csv(STATION_DATA, dtype={'PI Code': str})
+    # Read as string to prevent scientific notation initially
+    df = pd.read_csv(STATION_DATA, dtype=str)
     
-    # Clean Callsign: Strip -FM
+    # --- SCIENTIFIC NOTATION SCRUBBER ---
+    def scrub_pi(val):
+        if pd.isna(val) or val == 'nan' or val == '':
+            return ""
+        try:
+            float_val = float(val)
+            if float_val > 65535: return "" 
+            return '{:.0f}'.format(float_val)
+        except:
+            return str(val).strip()
+
+    df['PI Code'] = df['PI Code'].apply(scrub_pi)
+    df['Frequency'] = pd.to_numeric(df['Frequency'], errors='coerce')
     df['Station Callsign'] = df['Callsign'].str.replace(r'-FM$', '', regex=True)
-    
-    # CLEAN PI CODE: Remove 'nan' and ensure no '.0' decimal points appear
-    df['PI Code'] = df['PI Code'].fillna('').astype(str).str.replace(r'\.0$', '', regex=True)
-    
     df = df.rename(columns={'S/P': 'State/Province'})
     df['State/Province'] = df['State/Province'].fillna("Unknown")
     df['Country'] = df['Country'].fillna("Unknown")
@@ -31,7 +39,6 @@ def load_stations():
 @st.cache_data
 def load_categories():
     df = pd.read_csv(CATEGORY_DATA)
-    # Combine Category + Definition for the dropdown
     df['Display'] = df['Category'] + " - " + df['Definitions']
     return df
 
@@ -72,6 +79,7 @@ with st.sidebar:
     s_name = saved_data.get("name", "") if isinstance(saved_data, dict) else ""
     s_city = saved_data.get("city", "Mandeville") if isinstance(saved_data, dict) else "Mandeville"
     s_st = saved_data.get("st", "LA") if isinstance(saved_data, dict) else "LA"
+    s_ctry = saved_data.get("ctry", "USA") if isinstance(saved_data, dict) else "USA"
     s_lat = saved_data.get("lat", 30.3583) if isinstance(saved_data, dict) else 30.3583
     s_lon = saved_data.get("lon", -90.0656) if isinstance(saved_data, dict) else -90.0656
 
@@ -79,6 +87,7 @@ with st.sidebar:
     col_c, col_s = st.columns([2, 1])
     dxer_city = col_c.text_input("City", value=s_city)
     dxer_st = col_s.text_input("ST", value=s_st)
+    dxer_ctry = st.text_input("Your Country", value=s_ctry)
 
     st.divider()
     st.write("Coordinates (for Distance Math):")
@@ -86,9 +95,14 @@ with st.sidebar:
     home_lon = st.number_input("Longitude", value=float(s_lon), format="%.4f")
 
     if st.button("💾 Remember Me on this Browser"):
-        profile = {"name": dxer_name, "city": dxer_city, "st": dxer_st, "lat": home_lat, "lon": home_lon}
+        profile = {"name": dxer_name, "city": dxer_city, "st": dxer_st, "ctry": dxer_ctry, "lat": home_lat, "lon": home_lon}
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(profile)}));")
-        st.success("Preferences saved to browser!")
+        st.success("Preferences saved!")
+
+    st.divider()
+    if st.button("🔄 Clear Data Cache"):
+        st.cache_data.clear()
+        st.rerun()
 
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
@@ -132,13 +146,15 @@ view_df['Dist'] = view_df.apply(get_row_dist, axis=1)
 st.write(f"Showing {len(view_df)} stations:")
 view_df.insert(0, 'Select', False)
 
-# Aggressive formatting in the table itself
+# We define visible columns, but will grab the FULL row data for submission
+display_cols = ['Select', 'Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist']
+
 edited_df = st.data_editor(
-    view_df[['Select', 'Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist']],
+    view_df[display_cols],
     use_container_width=True, hide_index=True,
     column_config={
         "Select": st.column_config.CheckboxColumn("Log?", default=False),
-        "PI Code": st.column_config.TextColumn("PI Code"), # Explicitly set as Text
+        "PI Code": st.column_config.TextColumn("PI Code"),
         "Frequency": st.column_config.NumberColumn(format="%.1f")
     },
     disabled=['Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist'],
@@ -146,9 +162,13 @@ edited_df = st.data_editor(
 )
 
 # --- 7. LOGGING FORM ---
-selected_rows = edited_df[edited_df['Select'] == True]
-if not selected_rows.empty:
-    station = selected_rows.iloc[0]
+selected_rows_in_editor = edited_df[edited_df['Select'] == True]
+
+if not selected_rows_in_editor.empty:
+    # IMPORTANT: We use the index of the selected row to pull the FULL data from view_df
+    selected_idx = selected_rows_in_editor.index[0]
+    station = view_df.loc[selected_idx]
+    
     st.divider()
     with st.form("log_entry", clear_on_submit=True):
         st.subheader(f"📝 Log: {station['Station Callsign']} ({station['Frequency']})")
@@ -160,8 +180,8 @@ if not selected_rows.empty:
         col_a, col_b = st.columns(2)
         with col_a:
             rds_ready = st.selectbox("RDS Decoded?", ["No", "Yes"])
-            # Force the form to show PI Code as plain text
-            pi_code = st.text_input("PI Code", value=str(station['PI Code']) if rds_ready == "Yes" else "")
+            pi_val = str(station['PI Code'])
+            pi_code = st.text_input("PI Code", value=pi_val if rds_ready == "Yes" else "")
             sig = st.text_input("Signal Strength (dBm)")
         with col_b:
             cat_list = [""] + df_categories['Display'].tolist()
@@ -178,7 +198,7 @@ if not selected_rows.empty:
             else:
                 try:
                     new_row = [
-                        dxer_name, dxer_city, dxer_st, "USA", 
+                        dxer_name, dxer_city, dxer_st, dxer_ctry, 
                         station['Frequency'], station['Station Callsign'], station['Slogan'],
                         station['City'], station['State/Province'], station['Country'], "",
                         station['Format'], log_date.strftime("%m/%d/%Y"), log_time, 
@@ -187,7 +207,7 @@ if not selected_rows.empty:
                     ]
                     sheet = get_gsheet()
                     sheet.append_row(new_row)
-                    st.success(f"Log recorded for {station['Station Callsign']}!")
+                    st.success(f"Log recorded! Standings will update shortly.")
                     st.balloons()
                 except Exception as e:
                     st.error(f"GSheet Error: {e}")
