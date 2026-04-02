@@ -72,11 +72,12 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v7")
+        geolocator = Nominatim(user_agent="dx_central_logger_v8")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
-            st.session_state.dx_city = addr.get('city', addr.get('town', addr.get('village', '')))
+            # Update session state directly
+            st.session_state.dx_city = addr.get('city', addr.get('town', addr.get('village', addr.get('suburb', ''))))
             st.session_state.dx_st = addr.get('state', addr.get('province', ''))
             st.session_state.dx_ctry = addr.get('country', 'USA')
     except: pass
@@ -93,6 +94,7 @@ with st.sidebar:
     js_code = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_code)
     
+    # Initialize session states if not already present
     if 'dx_name' not in st.session_state:
         if isinstance(saved_data, dict):
             st.session_state.dx_name = saved_data.get("name", "")
@@ -105,8 +107,10 @@ with st.sidebar:
             st.session_state.dx_name, st.session_state.dx_city, st.session_state.dx_st = "", "", ""
             st.session_state.dx_ctry, st.session_state.home_lat, st.session_state.home_lon = "USA", 0.0, 0.0
 
+    # Fields linked to session state
     st.text_input("Your Name", key="dx_name")
     col_c, col_s = st.columns([2, 1])
+    # Note: Value is derived from the key in session state
     col_c.text_input("City", key="dx_city")
     col_s.text_input("ST/Prov", key="dx_st")
     st.text_input("Country", key="dx_ctry")
@@ -119,23 +123,25 @@ with st.sidebar:
         grid_input = st.text_input("Enter Grid (e.g. EM40xi)", placeholder="XX##xx")
         if grid_input and len(grid_input) >= 4:
             try:
-                # FIXED: Using to_location() which is more universal in the maidenhead library
                 lat, lon = mh.to_location(grid_input.strip())
                 st.session_state.home_lat, st.session_state.home_lon = lat, lon
                 reverse_geocode(lat, lon)
                 st.success(f"Grid {grid_input.upper()} Set: {lat:.4f}, {lon:.4f}")
-            except Exception as e: 
+                # Rerun to force the City/State fields to refresh with the new session state values
+                st.rerun()
+            except Exception: 
                 st.info("Searching for valid grid...")
 
     elif loc_method == "City Search":
         search_query = st.text_input("Enter City & State", placeholder="e.g. Mandeville, LA")
         if st.button("Lookup Location"):
-            geolocator = Nominatim(user_agent="dx_central_logger_v7")
+            geolocator = Nominatim(user_agent="dx_central_logger_v8")
             loc = geolocator.geocode(search_query)
             if loc:
                 st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
                 reverse_geocode(loc.latitude, loc.longitude)
                 st.success(f"Found: {loc.latitude:.4f}, {loc.longitude:.4f}")
+                st.rerun()
             else: st.error("Location not found.")
 
     st.session_state.home_lat = st.number_input("Latitude", value=st.session_state.home_lat, format="%.4f")
