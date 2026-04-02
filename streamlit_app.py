@@ -72,7 +72,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v5")
+        geolocator = Nominatim(user_agent="dx_central_logger_v6")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -117,22 +117,25 @@ with st.sidebar:
     
     if loc_method == "Grid Square":
         grid_input = st.text_input("Enter Grid (e.g. EM40xi)", placeholder="XX##xx")
-        if grid_input and len(grid_input) >= 4:
-            try:
-                # Standardize grid string format for the library
-                g = grid_input.strip()
-                clean_grid = g[:2].upper() + g[2:4] + g[4:].lower()
-                lat, lon = mh.toLoc(clean_grid)
-                st.session_state.home_lat, st.session_state.home_lon = lat, lon
-                reverse_geocode(lat, lon)
-                st.success(f"Grid Set: {lat:.4f}, {lon:.4f}")
-            except Exception: 
-                st.info("Still typing or invalid grid...")
+        if grid_input:
+            g = grid_input.strip()
+            # Grids must be even length: 2, 4, 6, or 8
+            if len(g) in [4, 6, 8]:
+                try:
+                    # Explicit conversion
+                    lat, lon = mh.toLoc(g)
+                    st.session_state.home_lat, st.session_state.home_lon = lat, lon
+                    reverse_geocode(lat, lon)
+                    st.success(f"Grid {g.upper()} Set: {lat:.4f}, {lon:.4f}")
+                except Exception as e: 
+                    st.error(f"Error parsing grid: {e}")
+            elif len(g) > 0:
+                st.info("Grid squares are usually 4 or 6 characters (e.g. EM40 or EM40xi)")
 
     elif loc_method == "City Search":
         search_query = st.text_input("Enter City & State", placeholder="e.g. Mandeville, LA")
         if st.button("Lookup Location"):
-            geolocator = Nominatim(user_agent="dx_central_logger_v5")
+            geolocator = Nominatim(user_agent="dx_central_logger_v6")
             loc = geolocator.geocode(search_query)
             if loc:
                 st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
@@ -140,7 +143,6 @@ with st.sidebar:
                 st.success(f"Found: {loc.latitude:.4f}, {loc.longitude:.4f}")
             else: st.error("Location not found.")
 
-    # Manual inputs show the current state and allow fine-tuning
     st.session_state.home_lat = st.number_input("Latitude", value=st.session_state.home_lat, format="%.4f")
     st.session_state.home_lon = st.number_input("Longitude", value=st.session_state.home_lon, format="%.4f")
 
@@ -176,7 +178,6 @@ def safe_dist(r):
     lat_d = dms_to_dd(r['Lat-N'])
     lon_d = dms_to_dd(r['Long-W'])
     if lat_d is None or lon_d is None: return 0
-    # Standard: WTFDA Long-W is positive, flip to negative for calculation
     return calculate_distance(st.session_state.home_lat, st.session_state.home_lon, lat_d, -lon_d)
 
 view_df['Dist'] = view_df.apply(safe_dist, axis=1)
