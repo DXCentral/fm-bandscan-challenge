@@ -72,7 +72,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v6")
+        geolocator = Nominatim(user_agent="dx_central_logger_v7")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -117,25 +117,20 @@ with st.sidebar:
     
     if loc_method == "Grid Square":
         grid_input = st.text_input("Enter Grid (e.g. EM40xi)", placeholder="XX##xx")
-        if grid_input:
-            g = grid_input.strip()
-            # Grids must be even length: 2, 4, 6, or 8
-            if len(g) in [4, 6, 8]:
-                try:
-                    # Explicit conversion
-                    lat, lon = mh.toLoc(g)
-                    st.session_state.home_lat, st.session_state.home_lon = lat, lon
-                    reverse_geocode(lat, lon)
-                    st.success(f"Grid {g.upper()} Set: {lat:.4f}, {lon:.4f}")
-                except Exception as e: 
-                    st.error(f"Error parsing grid: {e}")
-            elif len(g) > 0:
-                st.info("Grid squares are usually 4 or 6 characters (e.g. EM40 or EM40xi)")
+        if grid_input and len(grid_input) >= 4:
+            try:
+                # FIXED: Using to_location() which is more universal in the maidenhead library
+                lat, lon = mh.to_location(grid_input.strip())
+                st.session_state.home_lat, st.session_state.home_lon = lat, lon
+                reverse_geocode(lat, lon)
+                st.success(f"Grid {grid_input.upper()} Set: {lat:.4f}, {lon:.4f}")
+            except Exception as e: 
+                st.info("Searching for valid grid...")
 
     elif loc_method == "City Search":
         search_query = st.text_input("Enter City & State", placeholder="e.g. Mandeville, LA")
         if st.button("Lookup Location"):
-            geolocator = Nominatim(user_agent="dx_central_logger_v6")
+            geolocator = Nominatim(user_agent="dx_central_logger_v7")
             loc = geolocator.geocode(search_query)
             if loc:
                 st.session_state.home_lat, st.session_state.home_lon = loc.latitude, loc.longitude
@@ -173,12 +168,9 @@ st.button("Clear All Filters", on_click=reset_all)
 
 # --- 6. FILTER LOGIC & TABLE ---
 view_df = df_stations.copy()
-
 def safe_dist(r):
-    lat_d = dms_to_dd(r['Lat-N'])
-    lon_d = dms_to_dd(r['Long-W'])
-    if lat_d is None or lon_d is None: return 0
-    return calculate_distance(st.session_state.home_lat, st.session_state.home_lon, lat_d, -lon_d)
+    lat_d, lon_d = dms_to_dd(r['Lat-N']), dms_to_dd(r['Long-W'])
+    return calculate_distance(st.session_state.home_lat, st.session_state.home_lon, lat_d, -lon_d) if lat_d else 0
 
 view_df['Dist'] = view_df.apply(safe_dist, axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
