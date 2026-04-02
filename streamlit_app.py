@@ -3,154 +3,56 @@ import pandas as pd
 import numpy as np
 import math
 import datetime
-import gspread
-from google.oauth2.service_account import Credentials
 
-# --- 1. CONFIG & DATA LOADING ---
-STATION_DATA = "FM Challenge - Station List and Data - WTFDA Data.csv"
+# --- 1. CONFIG & URL PERSISTENCE ---
+# This looks at the URL to see if Name, Lat, or Lon are already there
+query_params = st.query_params
 
-@st.cache_data
-def load_stations():
-    df = pd.read_csv(STATION_DATA)
-    df['Station Callsign'] = df['Callsign'].str.replace(r'-FM$', '', regex=True)
-    df['PI Code'] = df['PI Code'].astype(str).replace('nan', '')
-    df = df.rename(columns={'S/P': 'State/Province'})
-    df['State/Province'] = df['State/Province'].fillna("Unknown")
-    df['Country'] = df['Country'].fillna("Unknown")
-    return df
+def update_url():
+    # This updates the browser URL whenever a value changes
+    st.query_params["name"] = st.session_state.dx_name
+    st.query_params["lat"] = str(st.session_state.dx_lat)
+    st.query_params["lon"] = str(st.session_state.dx_lon)
+    st.query_params["city"] = st.session_state.dx_city
+    st.query_params["st"] = st.session_state.dx_st
 
-# --- 2. THE DISTANCE ENGINE ---
-def dms_to_dd(dms_str):
-    if pd.isna(dms_str) or not isinstance(dms_str, str): return None
-    try:
-        parts = dms_str.split('-')
-        if len(parts) != 3: return None
-        return float(parts[0]) + (float(parts[1]) / 60) + (float(parts[2]) / 3600)
-    except: return None
-
-def calculate_distance(lat1, lon1, lat2, lon2):
-    if any(v is None for v in [lat1, lon1, lat2, lon2]): return 0
-    R = 3958.8 
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dphi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2
-    return round(2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a)), 1)
-
-# --- 3. GOOGLE SHEETS CONNECTION ---
-def get_gsheet():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    client = gspread.authorize(creds)
-    return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
-
-# --- 4. UI SETUP ---
-st.set_page_config(page_title="DX Central FM Logger", layout="wide")
-df_stations = load_stations()
-
-# Sidebar
+# --- 2. SIDEBAR WITH "REMEMBER ME" LOGIC ---
 with st.sidebar:
-    st.header("Personal Settings")
-    dxer_name = st.text_input("DXer Name", value=st.session_state.get('dxer_name', ""))
-    dxer_city = st.text_input("Your City", value=st.session_state.get('dxer_city', "Mandeville"))
-    dxer_st = st.text_input("Your State", value=st.session_state.get('dxer_st', "LA"))
-    dxer_ctry = st.text_input("Your Country", value=st.session_state.get('dxer_ctry', "USA"))
-    home_lat, home_lon = 30.3583, -90.0656 
-    st.session_state['dxer_name'] = dxer_name
-    st.session_state['dxer_city'] = dxer_city
-    st.session_state['dxer_st'] = dxer_st
-    st.session_state['dxer_ctry'] = dxer_ctry
+    st.header("📍 DXer Profile")
+    st.info("Fill this out once, then bookmark the page to 'Remember Me'!")
+    
+    # Pull values from URL if they exist, otherwise use defaults
+    default_name = query_params.get("name", "")
+    default_lat = float(query_params.get("lat", 30.3583))
+    default_lon = float(query_params.get("lon", -90.0656))
+    default_city = query_params.get("city", "Mandeville")
+    default_st = query_params.get("st", "LA")
 
-# --- 5. SEARCH & FILTERS ---
-st.subheader("🔍 Station Search")
+    dxer_name = st.text_input("Your Name", value=default_name, key="dx_name", on_change=update_url)
+    
+    col_c, col_s = st.columns([2, 1])
+    dxer_city = col_c.text_input("City", value=default_city, key="dx_city", on_change=update_url)
+    dxer_st = col_s.text_input("ST", value=default_st, key="dx_st", on_change=update_url)
 
-# Reset Filter Logic (The clean way)
-if 'filter_key' not in st.session_state:
-    st.session_state.filter_key = 0
-
-def reset_all():
-    st.session_state.filter_key += 1
-    st.rerun()
-
-state_options = sorted(df_stations['State/Province'].unique().tolist())
-country_options = sorted(df_stations['Country'].unique().tolist())
-
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-f_freq = c1.selectbox("Frequency", sorted(df_stations['Frequency'].unique()), index=None, key=f"freq_{st.session_state.filter_key}")
-f_call = c2.text_input("Callsign", key=f"call_{st.session_state.filter_key}").upper()
-f_city = c3.text_input("City", key=f"city_{st.session_state.filter_key}")
-f_sp = c4.selectbox("State/Province", state_options, index=None, key=f"sp_{st.session_state.filter_key}")
-f_country = c5.selectbox("Country", country_options, index=None, key=f"ctry_{st.session_state.filter_key}")
-f_slogan = c6.text_input("Slogan", key=f"slogan_{st.session_state.filter_key}")
-
-_, center_col, _ = st.columns([2, 1, 2])
-center_col.button("Clear All Filters", on_click=reset_all, use_container_width=True)
-
-# --- 6. FILTER LOGIC & TABLE ---
-view_df = df_stations.copy()
-if f_freq: view_df = view_df[view_df['Frequency'] == f_freq]
-if f_call: view_df = view_df[view_df['Station Callsign'].str.contains(f_call, na=False)]
-if f_city: view_df = view_df[view_df['City'].str.contains(f_city, case=False, na=False)]
-if f_sp: view_df = view_df[view_df['State/Province'] == f_sp]
-if f_country: view_df = view_df[view_df['Country'] == f_country]
-if f_slogan: view_df = view_df[view_df['Slogan'].str.contains(f_slogan, case=False, na=False)]
-
-def get_row_dist(row):
-    lat_val, lon_val = dms_to_dd(row['Lat-N']), dms_to_dd(row['Long-W'])
-    return calculate_distance(home_lat, home_lon, lat_val, -lon_val) if lat_val and lon_val else 0
-
-view_df['Dist'] = view_df.apply(get_row_dist, axis=1)
-
-st.write(f"Showing {len(view_df)} stations:")
-view_df.insert(0, 'Select', False)
-
-edited_df = st.data_editor(
-    view_df[['Select', 'Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist']],
-    use_container_width=True, hide_index=True,
-    column_config={"Select": st.column_config.CheckboxColumn("Log?", default=False)},
-    disabled=['Frequency', 'Station Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Dist'],
-    key=f"editor_{st.session_state.filter_key}"
-)
-
-# --- 7. LOGGING FORM ---
-selected_rows = edited_df[edited_df['Select'] == True]
-if not selected_rows.empty:
-    station = selected_rows.iloc[0]
     st.divider()
-    with st.form("log_entry", clear_on_submit=True):
-        st.subheader(f"📝 Log: {station['Station Callsign']} ({station['Frequency']})")
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        c_date, c_time = st.columns(2)
-        log_date = c_date.date_input("Date (UTC)", value=now_utc.date())
-        log_time = c_time.text_input("Time (UTC - HHMM)", value=now_utc.strftime("%H%M"))
+    st.write("Coordinates (for Distance Math):")
+    home_lat = st.number_input("Latitude", value=default_lat, format="%.4f", key="dx_lat", on_change=update_url)
+    home_lon = st.number_input("Longitude", value=default_lon, format="%.4f", key="dx_lon", on_change=update_url)
 
-        col_a, col_b = st.columns(2)
-        with col_a:
-            rds_ready = st.selectbox("RDS Decoded?", ["No", "Yes"])
-            pi_code = st.text_input("PI Code", value=station['PI Code'] if rds_ready == "Yes" else "")
-            sig = st.text_input("Signal Strength (dBm)")
-        with col_b:
-            cat = st.selectbox("Frequency Category", ["", "Open", "Fringe", "Semi-Local", "Local-HD", "Strong Local"], index=0)
-            prop = st.selectbox("Propagation", ["Local", "Tropo", "Es", "Meteor Scatter"])
-            fmlist = st.checkbox("Logged on FMList?")
-            wlogger = st.checkbox("Logged on WLogger?")
+    if st.button("Generate Bookmark Link"):
+        st.success("Check your browser address bar! Bookmark that URL to save your settings.")
 
-        if st.form_submit_button("Submit Log Entry"):
-            if not dxer_name:
-                st.error("Please enter your name in the sidebar!")
-            else:
-                try:
-                    # Map exactly to your Google Sheet Columns
-                    new_row = [
-                        dxer_name, dxer_city, dxer_st, dxer_ctry, 
-                        station['Frequency'], station['Station Callsign'], station['Slogan'],
-                        station['City'], station['State/Province'], station['Country'], "",
-                        station['Format'], log_date.strftime("%m/%d/%Y"), log_time, 
-                        station['Dist'], "", sig, rds_ready, pi_code, cat, prop,
-                        1 if fmlist else 0, 1 if wlogger else 0, 0, f"{dxer_name}{station['Frequency']}{station['Station Callsign']}"
-                    ]
-                    sheet = get_gsheet()
-                    sheet.append_row(new_row)
-                    st.success(f"Log recorded! Standings will update shortly.")
-                    st.balloons()
-                except Exception as e:
-                    st.error(f"GSheet Error: {e}")
+# --- 3. DISTANCE CALCULATION ---
+# Now using the dynamic home_lat and home_lon from the sidebar
+def get_row_dist(row):
+    lat_val = dms_to_dd(row['Lat-N'])
+    lon_val = dms_to_dd(row['Long-W'])
+    if lat_val is not None and lon_val is not None:
+        # We use the live variables from the sidebar here
+        return calculate_distance(home_lat, home_lon, lat_val, -lon_val)
+    return 0
+
+# Apply the distance to the dataframe
+# This will now trigger an instant refresh of the 'Dist' column 
+# whenever the user changes the Latitude or Longitude boxes
+view_df['Dist'] = view_df.apply(get_row_dist, axis=1)
