@@ -55,7 +55,6 @@ def get_logged_stations_set():
         sheet = get_gsheet()
         vals = sheet.get_all_values()
         if len(vals) < 2: return set()
-        # Create a set of "Callsign-Frequency" strings for quick lookup
         return set(str(row[5]).strip() + "-" + str(row[4]).strip() for row in vals[1:])
     except: return set()
 
@@ -85,7 +84,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v44")
+        geolocator = Nominatim(user_agent="dx_central_logger_v45")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -110,7 +109,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v44")
+            geolocator = Nominatim(user_agent="dx_central_logger_v45")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -189,11 +188,8 @@ st.button("Clear All Filters", on_click=reset_all)
 
 # --- 6. FILTER LOGIC & TABLE ---
 view_df = df_stations.copy()
-
-# RESTORED: This section cross-references the current list with your Google Sheet logs
 view_df['Dist'] = view_df.apply(lambda r: calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, dms_to_dd(r.get('Lat-N')), -dms_to_dd(r.get('Long-W')) if dms_to_dd(r.get('Long-W')) else None), axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
-
 if f_freq: view_df = view_df[view_df['Frequency'] == f_freq]
 if f_call: view_df = view_df[view_df['Station Callsign'].str.contains(f_call, na=False)]
 if f_city: view_df = view_df[view_df['City'].str.contains(f_city, case=False, na=False)]
@@ -203,7 +199,6 @@ if f_slogan: view_df = view_df[view_df['Slogan'].str.contains(f_slogan, case=Fal
 if f_status == "Logged Only": view_df = view_df[view_df['Already Logged'] == True]
 elif f_status == "Not Logged Only": view_df = view_df[view_df['Already Logged'] == False]
 
-# RESTORED: Re-applying the green dot emoji for logged stations
 view_df['Display Callsign'] = view_df.apply(lambda r: f"🟢 {r['Station Callsign']}" if r['Already Logged'] else r['Station Callsign'], axis=1)
 
 col_stats, col_export = st.columns([3, 1])
@@ -213,7 +208,26 @@ if f_status == "Logged Only":
     col_export.download_button(label="📥 Export Logs", data=csv_data, file_name=f"MyLogs.csv", mime='text/csv', use_container_width=True)
 
 view_df.insert(0, 'Select', False)
-st.data_editor(view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']], use_container_width=True, hide_index=True, column_config={"Select": st.column_config.CheckboxColumn("Log?"), "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"), "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center")}, disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'], key=f"ed_{st.session_state.filter_key}")
+# RESTORED: Alignment="center" for all columns
+st.data_editor(
+    view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']], 
+    use_container_width=True, 
+    hide_index=True, 
+    column_config={
+        "Select": st.column_config.CheckboxColumn("Log?"),
+        "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"),
+        "Display Callsign": st.column_config.TextColumn(alignment="center"),
+        "City": st.column_config.TextColumn(alignment="center"),
+        "State/Province": st.column_config.TextColumn(alignment="center"),
+        "Country": st.column_config.TextColumn(alignment="center"),
+        "Slogan": st.column_config.TextColumn(alignment="center"),
+        "PI Code": st.column_config.TextColumn(alignment="center"),
+        "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"),
+        "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center")
+    }, 
+    disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'], 
+    key=f"ed_{st.session_state.filter_key}"
+)
 
 # --- 7. LOGGING FORM ---
 st.divider()
