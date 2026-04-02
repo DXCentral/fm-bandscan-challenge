@@ -17,6 +17,7 @@ CATEGORY_DATA = "Frequency Categories - Sheet1.csv"
 @st.cache_data
 def load_stations():
     df = pd.read_csv(STATION_DATA, dtype=str)
+    # ERP POWER LOGIC
     df['ERP-H'] = pd.to_numeric(df['ERP-H'], errors='coerce').fillna(0)
     df['ERP-V'] = pd.to_numeric(df['ERP-V'], errors='coerce').fillna(0)
     df['Power (kW)'] = df[['ERP-H', 'ERP-V']].max(axis=1) / 1000
@@ -53,7 +54,7 @@ def get_logged_stations_set():
 
 # --- 2. HELPERS ---
 def dms_to_dd(dms_str):
-    if pd.isna(dms_str) or not isinstance(dms_str, str): return None
+    if pd.isna(dms_str) or not isinstance(dms_str, str) or dms_str.strip() == "": return None
     try:
         parts = dms_str.split('-')
         if len(parts) != 3: return None
@@ -61,8 +62,9 @@ def dms_to_dd(dms_str):
     except: return None
 
 def calculate_distance(lat1, lon1, lat2, lon2):
-    if any(v is None for v in [lat1, lon1, lat2, lon2]): return 0
-    if lat1 == 0 and lon1 == 0: return 0
+    # CRASH PROTECTION: If any coordinate is missing, return 0 instead of erroring
+    if any(v is None for v in [lat1, lon1, lat2, lon2]): return 0.0
+    if lat1 == 0 and lon1 == 0: return 0.0
     R = 3958.8 
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi, dlambda = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
@@ -77,7 +79,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v35")
+        geolocator = Nominatim(user_agent="dx_central_logger_v36")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -102,7 +104,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v35")
+            geolocator = Nominatim(user_agent="dx_central_logger_v36")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -116,14 +118,11 @@ df_stations = load_stations()
 df_categories = load_categories()
 logged_stations = get_logged_stations_set()
 
-# --- 4. SIDEBAR (STATIONARY SYNC) ---
+# --- 4. SIDEBAR ---
 with st.sidebar:
-    # A. FETCH DATA
     js_get = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_get)
     
-    # B. ROBUST INITIALIZATION
-    # We only apply saved data IF session hasn't been initialized and data exists
     if saved_data and not st.session_state.get('initialized'):
         st.session_state.dx_name_val = saved_data.get("name", "")
         st.session_state.dx_city_val = saved_data.get("city", "")
@@ -133,7 +132,6 @@ with st.sidebar:
         st.session_state.home_lon_val = float(saved_data.get("lon", 0.0))
         st.session_state.initialized = True
 
-    # Fallback for brand new sessions
     if 'dx_name_val' not in st.session_state:
         st.session_state.dx_name_val, st.session_state.dx_city_val, st.session_state.dx_st_val = "", "", ""
         st.session_state.dx_ctry_val, st.session_state.home_lat_val, st.session_state.home_lon_val = "USA", 0.0, 0.0
@@ -157,23 +155,11 @@ with st.sidebar:
     st.text_input("Country", key="dx_ctry_val")
 
     if st.button("💾 Remember Me on this Browser"):
-        prof = {
-            "name": st.session_state.dx_name_val, "city": st.session_state.dx_city_val, 
-            "st": st.session_state.dx_st_val, "ctry": st.session_state.dx_ctry_val, 
-            "lat": st.session_state.home_lat_val, "lon": st.session_state.home_lon_val
-        }
+        prof = {"name": st.session_state.dx_name_val, "city": st.session_state.dx_city_val, "st": st.session_state.dx_st_val, "ctry": st.session_state.dx_ctry_val, "lat": st.session_state.home_lat_val, "lon": st.session_state.home_lon_val}
         js_set = f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(prof)}));"
         st_javascript(js_set)
         st.session_state.initialized = True
         st.success("Profile Saved!")
-
-    st.divider()
-    with st.expander("📄 Privacy & Data Info"):
-        st.caption("Profile data is stored locally in your browser. Logs are public.")
-
-    if st.button("🔄 Clear Data Cache"):
-        st.cache_data.clear()
-        st.rerun()
 
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
@@ -196,7 +182,14 @@ st.button("Clear All Filters", on_click=reset_all)
 
 # --- 6. FILTER LOGIC & TABLE ---
 view_df = df_stations.copy()
-view_df['Dist'] = view_df.apply(lambda r: calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, dms_to_dd(r['Lat-N']), -dms_to_dd(r['Long-W'])), axis=1)
+
+def safe_calc_dist(r):
+    # FIXED: Added safe retrieval for coordinates to prevent TypeError
+    lat_d = dms_to_dd(r.get('Lat-N'))
+    lon_d = dms_to_dd(r.get('Long-W'))
+    return calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, lat_d, -lon_d if lon_d is not None else None)
+
+view_df['Dist'] = view_df.apply(safe_calc_dist, axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
 
 if f_freq: view_df = view_df[view_df['Frequency'] == f_freq]
@@ -214,24 +207,13 @@ col_stats.write(f"Showing {len(view_df)} stations:")
 
 if f_status == "Logged Only":
     csv_data = view_df.drop(columns=['Display Callsign', 'Already Logged']).to_csv(index=False).encode('utf-8')
-    col_export.download_button(label="📥 Export My Logged List", data=csv_data, file_name=f"MyLogs_{datetime.datetime.now().strftime('%Y%m%d')}.csv", mime='text/csv', use_container_width=True)
+    col_export.download_button(label="📥 Export My Logged List", data=csv_data, file_name=f"MyLogs.csv", mime='text/csv', use_container_width=True)
 
 view_df.insert(0, 'Select', False)
 st.data_editor(
     view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']],
     use_container_width=True, hide_index=True,
-    column_config={
-        "Select": st.column_config.CheckboxColumn("Log?"),
-        "Frequency": st.column_config.NumberColumn("Frequency", format="%.1f", alignment="center"),
-        "Display Callsign": st.column_config.TextColumn("Station Callsign", alignment="center"),
-        "City": st.column_config.TextColumn("City", alignment="center"),
-        "State/Province": st.column_config.TextColumn("State/Province", alignment="center"),
-        "Country": st.column_config.TextColumn("Country", alignment="center"),
-        "Slogan": st.column_config.TextColumn("Slogan", alignment="center"),
-        "PI Code": st.column_config.TextColumn("PI Code", alignment="center"),
-        "Power (kW)": st.column_config.NumberColumn("Power (kW)", format="%.1f", alignment="center"),
-        "Dist": st.column_config.NumberColumn("Dist (mi)", format="%.1f", alignment="center"),
-    },
+    column_config={"Select": st.column_config.CheckboxColumn("Log?"), "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Power (kW)": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Display Callsign": st.column_config.TextColumn(alignment="center"), "City": st.column_config.TextColumn(alignment="center"), "State/Province": st.column_config.TextColumn(alignment="center"), "Country": st.column_config.TextColumn(alignment="center"), "Slogan": st.column_config.TextColumn(alignment="center"), "PI Code": st.column_config.TextColumn(alignment="center")},
     disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'],
     key=f"ed_{st.session_state.filter_key}"
 )
@@ -253,26 +235,17 @@ if manual_mode or selected_idx is not None:
     with st.form("log_entry", clear_on_submit=True):
         st.subheader("📝 Submit Log Entry")
         now = datetime.datetime.now(datetime.timezone.utc)
-        r1c1, r1c2, r1c3 = st.columns(3)
-        log_freq = r1c1.number_input("Frequency", value=def_freq, format="%.1f", step=0.1)
-        log_call, log_city = r1c2.text_input("Callsign / ID", value=def_call), r1c3.text_input("Station City", value=def_city)
-        r2c1, r2c2, r2c3 = st.columns(3)
-        log_sp, log_ctry, log_dist = r2c1.text_input("Station State/Prov", value=def_sp), r2c2.text_input("Station Country", value=def_ctry), r2c3.number_input("Distance (mi)", value=def_dist)
-        r3c1, r3c2, r3c3 = st.columns(3)
-        l_date, l_time, sig = r3c1.date_input("Date (UTC)", value=now.date()), r3c2.text_input("Time (UTC - HHMM)", value=now.strftime("%H%M")), r3c3.text_input("Signal Strength (dBm)")
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1:
-            rds = st.selectbox("RDS Decoded?", ["No", "Yes"])
-            pi = st.text_input("PI Code", value=def_pi if rds == "Yes" else "")
-        with r4c2:
-            cat_d = st.selectbox("Frequency Category", [""] + df_categories['Display'].tolist())
-            final_cat, prop = cat_d.split(" - ")[0] if cat_d else "", st.selectbox("Propagation", ["Local", "Tropo", "Es", "Meteor Scatter"])
-        with r4c3:
-            st.write("**Bonus Points:**")
-            fml, wlo = st.checkbox("Logged on FMList?"), st.checkbox("Logged on WLogger?")
+        r1, r2, r3, r4 = st.columns(3), st.columns(3), st.columns(3), st.columns(3)
+        log_freq = r1[0].number_input("Frequency", value=def_freq, format="%.1f", step=0.1)
+        log_call, log_city = r1[1].text_input("Callsign / ID", value=def_call), r1[2].text_input("Station City", value=def_city)
+        log_sp, log_ctry, log_dist = r2[0].text_input("Station State/Prov", value=def_sp), r2[1].text_input("Station Country", value=def_ctry), r2[2].number_input("Distance (mi)", value=def_dist)
+        l_date, l_time, sig = r3[0].date_input("Date (UTC)", value=now.date()), r3[1].text_input("Time (UTC)", value=now.strftime("%H%M")), r3[2].text_input("Signal (dBm)")
+        with r4[0]: rds = st.selectbox("RDS?", ["No", "Yes"]); pi = st.text_input("PI Code", value=def_pi if rds == "Yes" else "")
+        with r4[1]: cat_d = st.selectbox("Category", [""] + df_categories['Display'].tolist()); final_cat, prop = cat_d.split(" - ")[0] if cat_d else "", st.selectbox("Prop", ["Local", "Tropo", "Es", "MS"])
+        with r4[2]: st.write("**Bonus Points:**"); fml, wlo = st.checkbox("FMList?"), st.checkbox("WLogger?")
 
-        if st.form_submit_button("Submit Log Entry"):
-            if not st.session_state.dx_name_val or st.session_state.home_lat_val == 0: st.error("Complete sidebar first!")
+        if st.form_submit_button("Submit"):
+            if not st.session_state.dx_name_val or st.session_state.home_lat_val == 0: st.error("Complete profile first!")
             else:
                 try:
                     row = [st.session_state.dx_name_val, st.session_state.dx_city_val, st.session_state.dx_st_val, st.session_state.dx_ctry_val, log_freq, log_call, "", log_city, log_sp, log_ctry, "", "", "", l_date.strftime("%m/%d/%Y"), l_time, log_dist, "", sig, rds, pi, final_cat, prop, 1 if fml else 0, 1 if wlo else 0, 0, f"{st.session_state.dx_name_val}{log_freq}{log_call}"]
