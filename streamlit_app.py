@@ -84,7 +84,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v45")
+        geolocator = Nominatim(user_agent="dx_central_logger_v46")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -109,7 +109,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v45")
+            geolocator = Nominatim(user_agent="dx_central_logger_v46")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -208,7 +208,6 @@ if f_status == "Logged Only":
     col_export.download_button(label="📥 Export Logs", data=csv_data, file_name=f"MyLogs.csv", mime='text/csv', use_container_width=True)
 
 view_df.insert(0, 'Select', False)
-# RESTORED: Alignment="center" for all columns
 st.data_editor(
     view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']], 
     use_container_width=True, 
@@ -231,11 +230,19 @@ st.data_editor(
 
 # --- 7. LOGGING FORM ---
 st.divider()
+
+# ADDED: Invisible Anchor to scroll to when a station is selected
+st.markdown("<div id='log-form'></div>", unsafe_allow_html=True)
+
 manual_mode = st.toggle("🛠️ Manual Entry Mode (Unlisted / Open Frequency)")
 ed_state = st.session_state.get(f"ed_{st.session_state.filter_key}")
 selected_idx = next((idx for idx, chg in ed_state["edited_rows"].items() if chg.get("Select")), None) if ed_state and "edited_rows" in ed_state else None
 
 if manual_mode or selected_idx is not None:
+    # ADDED: If a station is selected, trigger the scroll jump
+    if selected_idx is not None:
+        st.markdown('<script>window.location.hash = "log-form";</script>', unsafe_allow_html=True)
+
     if selected_idx is not None and not manual_mode:
         stn = view_df.iloc[selected_idx]
         def_freq, def_call = float(stn['Frequency']), str(stn['Station Callsign'])
