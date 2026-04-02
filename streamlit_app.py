@@ -84,7 +84,7 @@ def get_gsheet():
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v47")
+        geolocator = Nominatim(user_agent="dx_central_logger_v48")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -109,7 +109,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v47")
+            geolocator = Nominatim(user_agent="dx_central_logger_v48")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -119,6 +119,16 @@ def update_from_search():
 
 # --- 3. UI SETUP ---
 st.set_page_config(page_title="DX Central FM Logger", layout="wide")
+
+# CSS to hide the data_editor toolbar (eye, download, search, fullscreen icons)
+st.markdown("""
+    <style>
+    [data-testid="stElementToolbar"] {
+        display: none;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 df_stations = load_stations()
 df_categories = load_categories()
 logged_stations = get_logged_stations_set()
@@ -230,8 +240,6 @@ st.data_editor(
 
 # --- 7. LOGGING FORM ---
 st.divider()
-
-# Anchor for the log form
 st.markdown("<div id='log-form-anchor'></div>", unsafe_allow_html=True)
 
 manual_mode = st.toggle("🛠️ Manual Entry Mode (Unlisted / Open Frequency)")
@@ -239,7 +247,6 @@ ed_state = st.session_state.get(f"ed_{st.session_state.filter_key}")
 selected_idx = next((idx for idx, chg in ed_state["edited_rows"].items() if chg.get("Select")), None) if ed_state and "edited_rows" in ed_state else None
 
 if manual_mode or selected_idx is not None:
-    # UPDATED: Using JS to force scroll to the anchor immediately upon selection
     if selected_idx is not None:
         st_javascript("document.getElementById('log-form-anchor').scrollIntoView({behavior: 'smooth'});")
 
