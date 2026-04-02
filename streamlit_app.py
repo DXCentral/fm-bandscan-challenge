@@ -15,9 +15,14 @@ def load_stations():
     # Force PI Code to string to prevent Scientific Notation
     df['PI Code'] = df['PI Code'].astype(str).replace('nan', '')
     df = df.rename(columns={'S/P': 'State/Province'})
+    
+    # Pre-sort unique lists for dropdowns
+    df['State/Province'] = df['State/Province'].fillna("Unknown")
+    df['Country'] = df['Country'].fillna("Unknown")
+    
     return df
 
-# --- 2. THE DISTANCE ENGINE (More robust) ---
+# --- 2. THE DISTANCE ENGINE ---
 def dms_to_dd(dms_str):
     if pd.isna(dms_str) or not isinstance(dms_str, str): return None
     try:
@@ -56,18 +61,25 @@ with st.sidebar:
 
 # --- 4. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
+
+# Prepare Dropdown Options
+state_options = sorted(df_stations['State/Province'].unique().tolist())
+country_options = sorted(df_stations['Country'].unique().tolist())
+
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 f_freq = c1.selectbox("Frequency", sorted(df_stations['Frequency'].unique()), index=None, key='f_freq_val')
 f_call = c2.text_input("Callsign", key='f_call_val').upper()
 f_city = c3.text_input("City", key='f_city_val')
-f_sp = c4.text_input("State/Prov (Fuzzy)", key='f_sp_val')
-f_country = c5.text_input("Country", key='f_country_val')
+# New Dropdowns for State and Country
+f_sp = c4.selectbox("State/Province", state_options, index=None, key='f_sp_val')
+f_country = c5.selectbox("Country", country_options, index=None, key='f_country_val')
 f_slogan = c6.text_input("Slogan", key='f_slogan_val')
 
 _, center_col, _ = st.columns([2, 1, 2])
 if center_col.button("Clear All Filters", use_container_width=True):
-    st.session_state.f_freq_val = None
-    for k in ['f_call_val', 'f_city_val', 'f_sp_val', 'f_country_val', 'f_slogan_val']:
+    for k in ['f_freq_val', 'f_sp_val', 'f_country_val']:
+        st.session_state[k] = None
+    for k in ['f_call_val', 'f_city_val', 'f_slogan_val']:
         st.session_state[k] = ""
     st.rerun()
 
@@ -76,11 +88,11 @@ view_df = df_stations.copy()
 if f_freq: view_df = view_df[view_df['Frequency'] == f_freq]
 if f_call: view_df = view_df[view_df['Station Callsign'].str.contains(f_call, na=False)]
 if f_city: view_df = view_df[view_df['City'].str.contains(f_city, case=False, na=False)]
-if f_sp: view_df = view_df[view_df['State/Province'].str.contains(f_sp, case=False, na=False)]
-if f_country: view_df = view_df[view_df['Country'].str.contains(f_country, case=False, na=False)]
+if f_sp: view_df = view_df[view_df['State/Province'] == f_sp]
+if f_country: view_df = view_df[view_df['Country'] == f_country]
 if f_slogan: view_df = view_df[view_df['Slogan'].str.contains(f_slogan, case=False, na=False)]
 
-# SAFER DISTANCE CALCULATION
+# Distance Calculation
 def get_row_dist(row):
     lat_val = dms_to_dd(row['Lat-N'])
     lon_val = dms_to_dd(row['Long-W'])
@@ -91,7 +103,7 @@ def get_row_dist(row):
 view_df['Dist'] = view_df.apply(get_row_dist, axis=1)
 
 # --- 6. THE INTERACTIVE TABLE ---
-st.write(f"Showing {len(view_df)} stations. Check the 'Log?' box to select a station:")
+st.write(f"Showing {len(view_df)} stations:")
 view_df.insert(0, 'Select', False)
 
 edited_df = st.data_editor(
@@ -130,7 +142,5 @@ if not selected_rows.empty:
             wlogger = st.checkbox("Logged on WLogger?")
 
         if st.form_submit_button("Submit Log Entry"):
-            if not dxer_name:
-                st.error("Please enter your name in the sidebar!")
-            else:
-                st.success(f"Entry for {station['Station Callsign']} recorded locally! Distance: {station['Dist']} miles.")
+            # Success feedback
+            st.success(f"Entry for {station['Station Callsign']} recorded! Distance: {station['Dist']} miles.")
