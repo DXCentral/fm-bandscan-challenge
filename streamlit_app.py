@@ -77,14 +77,14 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     return round(2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a)), 1)
 
 def get_gsheet():
-    scope = ["https://www.googleapis.com/auth/spreadsheets"]
+    scope = ["https://www.googleapis.com/auth/sheets"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
     return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v42")
+        geolocator = Nominatim(user_agent="dx_central_logger_v43")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -109,7 +109,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v42")
+            geolocator = Nominatim(user_agent="dx_central_logger_v43")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -163,23 +163,21 @@ with st.sidebar:
         st.session_state.initialized = True
         st.success("Profile Saved!")
 
-    # RESTORED: Privacy Expander & Clear Cache
     st.divider()
     with st.expander("📄 Privacy & Data Info"):
         st.caption("""
-        **Profile Data:** Clicking 'Remember Me' saves your name and location locally in your browser's storage. 
-        This is used only to autofill the form and calculate distances.
-        
-        **Logs:** Submitted logs are recorded publicly in the DX Central FM Challenge database.
+        **Profile Data:** Clicking 'Remember Me' saves your name and location locally. 
+        **Logs:** Submitted logs are recorded publicly in the DX Central database.
         """)
-
     if st.button("🔄 Clear Data Cache"):
         st.cache_data.clear()
         st.rerun()
 
 # --- 5. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
-st.caption("Station data is sourced from WTFDA [db.wtfda.org](https://db.wtfda.org/)")
+# UPDATED CREDITS STATEMENT
+st.caption("Station list and data is sourced from the Worldwide TV-FM DX Association Station Database at [db.wtfda.org](https://db.wtfda.org/)")
+
 if 'filter_key' not in st.session_state: st.session_state.filter_key = 0
 def reset_all(): st.session_state.filter_key += 1
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
