@@ -72,8 +72,8 @@ def get_personal_logs_df(dxer_name):
         all_rows = sheet.get_all_values()
         if len(all_rows) < 2: return pd.DataFrame()
         df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
-        # Force column name consistency for filtering
-        return df[df[df.columns[0]].str.strip().lower() == dxer_name.strip().lower()]
+        # Case-insensitive name match
+        return df[df[df.columns[0]].astype(str).str.strip().str.lower() == dxer_name.strip().lower()]
     except: return pd.DataFrame()
 
 # --- 2. HELPERS ---
@@ -96,7 +96,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v55")
+        geolocator = Nominatim(user_agent="dx_central_logger_v56")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -120,7 +120,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v55")
+            geolocator = Nominatim(user_agent="dx_central_logger_v56")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -208,18 +208,20 @@ view_df['Display Callsign'] = view_df.apply(lambda r: f"🟢 {r['Station Callsig
 col_stats, col_export = st.columns([3, 1])
 col_stats.write(f"Showing {len(view_df)} stations:")
 
-# RECOVERED EXPORT LOGIC
 if f_status == "Logged Only":
     personal_logs_df = get_personal_logs_df(st.session_state.dx_name_val)
     if not personal_logs_df.empty:
-        # Create a "Searchable Callsign" column that removes -FM so it matches the UI table
-        personal_logs_df['Search_Call'] = personal_logs_df['Station Callsign'].str.replace(r'-FM$', '', regex=True)
-        visible_calls = view_df['Station Callsign'].unique()
-        export_df = personal_logs_df[personal_logs_df['Search_Call'].isin(visible_calls)]
-        
-        # If the visible list is filtered, export that. If no filters, export all personal logs.
-        final_export = export_df if not export_df.empty else personal_logs_df
-        
+        # If UI table is filtered (not just Status), only export matching logs
+        filters_active = any([f_freq, f_call, f_city, f_sp, f_country, f_slogan])
+        if filters_active:
+            personal_logs_df['Search_Call'] = personal_logs_df['Station Callsign'].str.replace(r'-FM$', '', regex=True)
+            visible_calls = view_df['Station Callsign'].unique()
+            final_export = personal_logs_df[personal_logs_df['Search_Call'].isin(visible_calls)]
+            # If the specific filter resulted in 0 rows (rare), fallback to all personal logs
+            if final_export.empty: final_export = personal_logs_df
+        else:
+            final_export = personal_logs_df
+            
         csv_data = final_export.drop(columns=['Search_Call'], errors='ignore').to_csv(index=False).encode('utf-8')
         col_export.download_button(label="📥 Export Detailed Logs", data=csv_data, file_name=f"{st.session_state.dx_name_val}_Detailed_Logs.csv", mime='text/csv', use_container_width=True)
 
