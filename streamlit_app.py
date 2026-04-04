@@ -50,12 +50,20 @@ def load_categories():
     df['Display'] = df['Category'] + " - " + df['Definitions']
     return df
 
-def get_logged_stations_set():
+def get_logged_stations_set(dxer_name):
+    """Retrieves logs from the 'Form Entries' sheet matching the current DXer's name."""
     try:
+        if not dxer_name or dxer_name.strip() == "": return set()
         sheet = get_gsheet()
         vals = sheet.get_all_values()
         if len(vals) < 2: return set()
-        return set(str(row[5]).strip() + "-" + str(row[4]).strip() for row in vals[1:])
+        
+        # Column A (index 0) is Name, Column E (index 4) is Freq, Column F (index 5) is Callsign
+        return set(
+            str(row[5]).strip() + "-" + str(row[4]).strip() 
+            for row in vals[1:] 
+            if str(row[0]).strip().lower() == dxer_name.strip().lower()
+        )
     except: return set()
 
 # --- 2. HELPERS ---
@@ -80,16 +88,17 @@ def get_gsheet():
     scope = ["https://www.googleapis.com/auth/spreadsheets"]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     client = gspread.authorize(creds)
-    return client.open_by_key(st.secrets["spreadsheet_id"]).sheet1
+    # Ensure this is looking at the 'Form Entries' sheet for lookups
+    return client.open_by_key(st.secrets["spreadsheet_id"]).worksheet("Form Entries")
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v49")
+        geolocator = Nominatim(user_agent="dx_central_logger_v51")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
             city_tags = ['city', 'town', 'village', 'hamlet', 'suburb', 'municipality']
-            found_city = addr.get('city', addr.get('town', addr.get('village', '')))
+            found_city = next((addr[tag] for tag in city_tags if tag in addr), "")
             st.session_state["dx_city_val"] = found_city
             st.session_state["dx_st_val"] = addr.get('state', addr.get('province', ''))
             st.session_state["dx_ctry_val"] = addr.get('country', 'USA')
@@ -109,7 +118,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v49")
+            geolocator = Nominatim(user_agent="dx_central_logger_v51")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -119,13 +128,19 @@ def update_from_search():
 
 # --- 3. UI SETUP ---
 st.set_page_config(page_title="DX Central FM Logger", layout="wide")
-st.markdown("<style>[data-testid='stElementToolbar'] {display: none;}</style>", unsafe_allow_html=True)
+
+# CSS: Hides the table toolbar and centers headers
+st.markdown("""
+    <style>
+    [data-testid="stElementToolbar"] { display: none; }
+    .stDataFrame th { text-align: center !important; }
+    </style>
+    """, unsafe_allow_html=True)
 
 df_stations = load_stations()
 df_categories = load_categories()
-logged_stations = get_logged_stations_set()
 
-# --- 4. SIDEBAR (PROFILE & LOCATION) ---
+# --- 4. SIDEBAR ---
 with st.sidebar:
     js_get = "JSON.parse(localStorage.getItem('dx_central_profile'));"
     saved_data = st_javascript(js_get)
@@ -171,8 +186,7 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-# --- 5. MAIN PAGE LOGIC (FAILSAFE) ---
-# CHECK IF PROFILE IS COMPLETE
+# --- 5. FAILSAFE: Check Profile ---
 profile_complete = (
     st.session_state.dx_name_val.strip() != "" and 
     st.session_state.home_lat_val != 0.0 and 
@@ -181,16 +195,16 @@ profile_complete = (
 
 if not profile_complete:
     st.error("🛑 Action Required: Setup Your Profile")
-    st.info("To log stations, please open the **Sidebar Menu** (click the **>** arrow in the top-left on mobile) to enter your **Name** and **Location**.")
-    st.warning("Distance calculations and logging are disabled until your profile is set.")
-    st.stop() # Hides everything below this line
-else:
-    st.success(f"✅ Logged in as: **{st.session_state.dx_name_val}** | Location: **{st.session_state.dx_city_val}, {st.session_state.dx_st_val}**")
+    st.info("To log stations and track your progress, open the **Sidebar Menu** (click the **>** arrow in the top-left on mobile) to enter your **Name** and **Location**.")
+    st.stop()
 
-# --- 6. SEARCH & FILTERS (Only shows if profile_complete is True) ---
+# Fetch PERSONALized log set
+logged_stations = get_logged_stations_set(st.session_state.dx_name_val)
+st.success(f"✅ Logged in as: **{st.session_state.dx_name_val}**")
+
+# --- 6. SEARCH & FILTERS ---
 st.subheader("🔍 Station Search")
 st.caption("Station list and data is sourced from the Worldwide TV-FM DX Association Station Database at [db.wtfda.org](https://db.wtfda.org/)")
-
 if 'filter_key' not in st.session_state: st.session_state.filter_key = 0
 def reset_all(): st.session_state.filter_key += 1
 c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
@@ -208,27 +222,41 @@ st.button("Clear All Filters", on_click=reset_all)
 view_df = df_stations.copy()
 view_df['Dist'] = view_df.apply(lambda r: calculate_distance(st.session_state.home_lat_val, st.session_state.home_lon_val, dms_to_dd(r.get('Lat-N')), -dms_to_dd(r.get('Long-W')) if dms_to_dd(r.get('Long-W')) else None), axis=1)
 view_df['Already Logged'] = view_df.apply(lambda r: f"{str(r['Station Callsign']).strip()}-{str(r['Frequency']).strip()}" in logged_stations, axis=1)
+
 if f_freq: view_df = view_df[view_df['Frequency'] == f_freq]
 if f_call: view_df = view_df[view_df['Station Callsign'].str.contains(f_call, na=False)]
 if f_city: view_df = view_df[view_df['City'].str.contains(f_city, case=False, na=False)]
 if f_sp: view_df = view_df[view_df['State/Province'] == f_sp]
 if f_country: view_df = view_df[view_df['Country'] == f_country]
 if f_slogan: view_df = view_df[view_df['Slogan'].str.contains(f_slogan, case=False, na=False)]
+
 if f_status == "Logged Only": view_df = view_df[view_df['Already Logged'] == True]
 elif f_status == "Not Logged Only": view_df = view_df[view_df['Already Logged'] == False]
+
 view_df['Display Callsign'] = view_df.apply(lambda r: f"🟢 {r['Station Callsign']}" if r['Already Logged'] else r['Station Callsign'], axis=1)
 
 col_stats, col_export = st.columns([3, 1])
 col_stats.write(f"Showing {len(view_df)} stations:")
 if f_status == "Logged Only":
     csv_data = view_df.drop(columns=['Display Callsign', 'Already Logged']).to_csv(index=False).encode('utf-8')
-    col_export.download_button(label="📥 Export Logs", data=csv_data, file_name=f"MyLogs.csv", mime='text/csv', use_container_width=True)
+    col_export.download_button(label="📥 Export My Logs", data=csv_data, file_name=f"{st.session_state.dx_name_val}_Logs.csv", mime='text/csv', use_container_width=True)
 
 view_df.insert(0, 'Select', False)
 st.data_editor(
     view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']], 
     use_container_width=True, hide_index=True, 
-    column_config={"Select": st.column_config.CheckboxColumn("Log?"), "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"), "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Display Callsign": st.column_config.TextColumn(alignment="center"), "City": st.column_config.TextColumn(alignment="center"), "State/Province": st.column_config.TextColumn(alignment="center"), "Country": st.column_config.TextColumn(alignment="center"), "Slogan": st.column_config.TextColumn(alignment="center"), "PI Code": st.column_config.TextColumn(alignment="center")}, 
+    column_config={
+        "Select": st.column_config.CheckboxColumn("Log?"),
+        "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"),
+        "Display Callsign": st.column_config.TextColumn(alignment="center"),
+        "City": st.column_config.TextColumn(alignment="center"),
+        "State/Province": st.column_config.TextColumn(alignment="center"),
+        "Country": st.column_config.TextColumn(alignment="center"),
+        "Slogan": st.column_config.TextColumn(alignment="center"),
+        "PI Code": st.column_config.TextColumn(alignment="center"),
+        "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"),
+        "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center")
+    }, 
     disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'], 
     key=f"ed_{st.session_state.filter_key}"
 )
@@ -253,7 +281,7 @@ if manual_mode or selected_idx is not None:
         def_freq, def_call, def_city, def_sp, def_ctry, def_pi, def_dist, d_check = 88.1, "", "", "", "", "", 0.0, False
         def_slogan, def_format = "", ""
 
-    if d_check: st.warning(f"⚠️ Already Logged: {def_call}")
+    if d_check: st.warning(f"⚠️ You have already logged: {def_call}")
     with st.form("log_entry", clear_on_submit=True):
         st.subheader("📝 Submit Log Entry")
         now = datetime.datetime.now(datetime.timezone.utc)
