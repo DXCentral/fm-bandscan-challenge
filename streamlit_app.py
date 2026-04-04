@@ -95,7 +95,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v53")
+        geolocator = Nominatim(user_agent="dx_central_logger_v54")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -109,7 +109,9 @@ def update_from_grid():
     grid = st.session_state.grid_input.strip()
     if len(grid) >= 4:
         try:
-            lat, lon = mh.to_location(grid); st.session_state["home_lat_val"], st.session_state["home_lon_val"] = float(lat), float(lon)
+            lat, lon = mh.to_location(grid)
+            st.session_state["home_lat_val"] = float(lat)
+            st.session_state["home_lon_val"] = float(lon)
             reverse_geocode(lat, lon)
         except: pass
 
@@ -117,10 +119,11 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v53")
+            geolocator = Nominatim(user_agent="dx_central_logger_v54")
             loc = geolocator.geocode(query)
             if loc:
-                st.session_state["home_lat_val"], st.session_state["home_lon_val"] = float(loc.latitude) Monthly, float(loc.longitude)
+                st.session_state["home_lat_val"] = float(loc.latitude)
+                st.session_state["home_lon_val"] = float(loc.longitude)
                 reverse_geocode(loc.latitude, loc.longitude)
         except: pass
 
