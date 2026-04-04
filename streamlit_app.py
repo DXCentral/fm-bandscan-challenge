@@ -95,7 +95,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v52")
+        geolocator = Nominatim(user_agent="dx_central_logger_v53")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -117,10 +117,10 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v52")
+            geolocator = Nominatim(user_agent="dx_central_logger_v53")
             loc = geolocator.geocode(query)
             if loc:
-                st.session_state["home_lat_val"], st.session_state["home_lon_val"] = float(loc.latitude), float(loc.longitude)
+                st.session_state["home_lat_val"], st.session_state["home_lon_val"] = float(loc.latitude) Monthly, float(loc.longitude)
                 reverse_geocode(loc.latitude, loc.longitude)
         except: pass
 
@@ -158,14 +158,18 @@ with st.sidebar:
         prof = {"name": st.session_state.dx_name_val, "city": st.session_state.dx_city_val, "st": st.session_state.dx_st_val, "ctry": st.session_state.dx_ctry_val, "lat": st.session_state.home_lat_val, "lon": st.session_state.home_lon_val}
         st_javascript(f"localStorage.setItem('dx_central_profile', JSON.stringify({json.dumps(prof)}));")
         st.session_state.initialized = True; st.success("Profile Saved!")
-    st.divider(); with st.expander("📄 Privacy & Data Info"): st.caption("Profile data is stored locally. Logs are public.")
-    if st.button("🔄 Clear Data Cache"): st.cache_data.clear(); st.rerun()
+    st.divider()
+    with st.expander("📄 Privacy & Data Info"): 
+        st.caption("Profile data is stored locally. Logs are public.")
+    if st.button("🔄 Clear Data Cache"): 
+        st.cache_data.clear()
+        st.rerun()
 
 # --- 5. FAILSAFE ---
 profile_complete = (st.session_state.dx_name_val.strip() != "" and st.session_state.home_lat_val != 0.0 and st.session_state.home_lon_val != 0.0)
 if not profile_complete:
     st.error("🛑 Action Required: Setup Your Profile")
-    st.info("To log stations, open the **Sidebar Menu** (click **>** arrow in the top-left on mobile) to enter your **Name** and **Location**.")
+    st.info("To log stations, open the **Sidebar Menu** (click the **>** arrow in the top-left on mobile) to enter your **Name** and **Location**.")
     st.stop()
 logged_stations = get_logged_stations_set(st.session_state.dx_name_val)
 st.success(f"✅ Logged in as: **{st.session_state.dx_name_val}**")
