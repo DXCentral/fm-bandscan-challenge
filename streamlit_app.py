@@ -72,7 +72,10 @@ def get_personal_logs_df(dxer_name):
         all_rows = sheet.get_all_values()
         if len(all_rows) < 2: return pd.DataFrame()
         df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
-        # Case-insensitive name match
+        
+        # TRIM: Only keep columns A through U (0 to 20)
+        df = df.iloc[:, :21]
+        
         return df[df[df.columns[0]].astype(str).str.strip().str.lower() == dxer_name.strip().lower()]
     except: return pd.DataFrame()
 
@@ -96,7 +99,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v56")
+        geolocator = Nominatim(user_agent="dx_central_logger_v57")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -120,7 +123,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v56")
+            geolocator = Nominatim(user_agent="dx_central_logger_v57")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -211,13 +214,11 @@ col_stats.write(f"Showing {len(view_df)} stations:")
 if f_status == "Logged Only":
     personal_logs_df = get_personal_logs_df(st.session_state.dx_name_val)
     if not personal_logs_df.empty:
-        # If UI table is filtered (not just Status), only export matching logs
         filters_active = any([f_freq, f_call, f_city, f_sp, f_country, f_slogan])
         if filters_active:
             personal_logs_df['Search_Call'] = personal_logs_df['Station Callsign'].str.replace(r'-FM$', '', regex=True)
             visible_calls = view_df['Station Callsign'].unique()
             final_export = personal_logs_df[personal_logs_df['Search_Call'].isin(visible_calls)]
-            # If the specific filter resulted in 0 rows (rare), fallback to all personal logs
             if final_export.empty: final_export = personal_logs_df
         else:
             final_export = personal_logs_df
