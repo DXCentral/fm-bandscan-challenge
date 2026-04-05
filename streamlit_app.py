@@ -72,10 +72,7 @@ def get_personal_logs_df(dxer_name):
         all_rows = sheet.get_all_values()
         if len(all_rows) < 2: return pd.DataFrame()
         df = pd.DataFrame(all_rows[1:], columns=all_rows[0])
-        
-        # TRIM: Only keep columns A through U (0 to 20)
         df = df.iloc[:, :21]
-        
         return df[df[df.columns[0]].astype(str).str.strip().str.lower() == dxer_name.strip().lower()]
     except: return pd.DataFrame()
 
@@ -99,7 +96,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
 
 def reverse_geocode(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="dx_central_logger_v57")
+        geolocator = Nominatim(user_agent="dx_central_logger_v58")
         location = geolocator.reverse(f"{lat}, {lon}", language='en')
         if location:
             addr = location.raw.get('address', {})
@@ -123,7 +120,7 @@ def update_from_search():
     query = st.session_state.search_query.strip()
     if query:
         try:
-            geolocator = Nominatim(user_agent="dx_central_logger_v57")
+            geolocator = Nominatim(user_agent="dx_central_logger_v58")
             loc = geolocator.geocode(query)
             if loc:
                 st.session_state["home_lat_val"] = float(loc.latitude)
@@ -227,7 +224,7 @@ if f_status == "Logged Only":
         col_export.download_button(label="📥 Export Detailed Logs", data=csv_data, file_name=f"{st.session_state.dx_name_val}_Detailed_Logs.csv", mime='text/csv', use_container_width=True)
 
 view_df.insert(0, 'Select', False)
-st.data_editor(view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']], use_container_width=True, hide_index=True, column_config={"Select": st.column_config.CheckboxColumn("Log?"), "Frequency": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"), "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Display Callsign": st.column_config.TextColumn(alignment="center"), "City": st.column_config.TextColumn(alignment="center"), "State/Province": st.column_config.TextColumn(alignment="center"), "Country": st.column_config.TextColumn(alignment="center"), "Slogan": st.column_config.TextColumn(alignment="center"), "PI Code": st.column_config.TextColumn(alignment="center")}, disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'], key=f"ed_{st.session_state.filter_key}")
+st.data_editor(view_df[['Select', 'Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist']], use_container_width=True, hide_index=True, column_config={"Select": st.column_config.CheckboxColumn("Log?"), "Frequency": st.column_config.NumberColumn(format="%.2f", alignment="center"), "Power (kW)": st.column_config.NumberColumn(format="%.2f", alignment="center"), "Dist": st.column_config.NumberColumn(format="%.1f", alignment="center"), "Display Callsign": st.column_config.TextColumn(alignment="center"), "City": st.column_config.TextColumn(alignment="center"), "State/Province": st.column_config.TextColumn(alignment="center"), "Country": st.column_config.TextColumn(alignment="center"), "Slogan": st.column_config.TextColumn(alignment="center"), "PI Code": st.column_config.TextColumn(alignment="center")}, disabled=['Frequency', 'Display Callsign', 'City', 'State/Province', 'Country', 'Slogan', 'PI Code', 'Power (kW)', 'Dist'], key=f"ed_{st.session_state.filter_key}")
 
 # --- 8. FORM ---
 st.divider(); st.markdown("<div id='log-form-anchor'></div>", unsafe_allow_html=True)
@@ -240,11 +237,15 @@ if manual_mode or selected_idx is not None:
         stn = view_df.iloc[selected_idx]
         def_freq, def_call, def_city, def_sp, def_ctry, def_pi, def_dist, d_check, def_slogan, def_format = float(stn['Frequency']), str(stn['Station Callsign']), str(stn['City']), str(stn['State/Province']), str(stn['Country']), str(stn['PI Code']), float(stn['Dist']), stn['Already Logged'], str(stn['Slogan']), str(stn['Format'])
     else:
-        def_freq, def_call, def_city, def_sp, def_ctry, def_pi, def_dist, d_check, def_slogan, def_format = 88.1, "", "", "", "", "", 0.0, False, "", ""
+        def_freq, def_call, def_city, def_sp, def_ctry, def_pi, def_dist, d_check, def_slogan, def_format = 88.0, "", "", "", "", "", 0.0, False, "", ""
     if d_check: st.warning(f"⚠️ Already Logged: {def_call}")
     with st.form("log_entry", clear_on_submit=True):
         st.subheader("📝 Submit Log Entry"); now = datetime.datetime.now(datetime.timezone.utc); r1, r2, r3, r4 = st.columns(3), st.columns(3), st.columns(3), st.columns(3)
-        log_freq, log_call, log_city = r1[0].number_input("Frequency", value=def_freq, format="%.1f", step=0.1), r1[1].text_input("Callsign / ID", value=def_call), r1[2].text_input("Station City", value=def_city)
+        
+        # UPDATED: No step=0.1 means they can type 88.25, 101.125, etc. Format set to %.3f to support precise spacing.
+        log_freq = r1[0].number_input("Frequency", value=def_freq, format="%.3f", step=None)
+        
+        log_call, log_city = r1[1].text_input("Callsign / ID", value=def_call), r1[2].text_input("Station City", value=def_city)
         log_sp, log_ctry, log_dist = r2[0].text_input("State/Prov", value=def_sp), r2[1].text_input("Country", value=def_ctry), r2[2].number_input("Dist (mi)", value=def_dist)
         l_date, l_time, sig = r3[0].date_input("Date (UTC)", value=now.date()), r3[1].text_input("Time (UTC)", value=now.strftime("%H%M")), r3[2].text_input("Signal (dBm)")
         with r4[0]:
